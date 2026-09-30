@@ -9,7 +9,6 @@ export interface Settings {
 }
 export interface Glyph {
   canvas: HTMLCanvasElement;
-  width: number;
   inkTop: number;
   inkBottom: number;
 }
@@ -22,7 +21,7 @@ export interface Atlas {
   ratio: number;
   baseline: number;
   spacing: number;
-  positions: Map<string, { x: number; width: number }[]>;
+  advances: Map<string, number>;
 }
 export interface Cell {
   key: string;
@@ -30,7 +29,6 @@ export interface Cell {
   from?: number;
   to?: number;
   x: number;
-  width: number;
 }
 export interface Surface {
   canvas: HTMLCanvasElement;

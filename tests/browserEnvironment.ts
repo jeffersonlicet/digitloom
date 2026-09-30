@@ -90,9 +90,17 @@ export function createBrowserEnvironment() {
     effect: KeyframeEffect;
     currentTime: number;
   }[] = [];
+  const durations: number[] = [];
   vi.stubGlobal(
     "KeyframeEffect",
     class {
+      constructor(
+        _target: unknown,
+        _frames: unknown,
+        timing: KeyframeEffectOptions,
+      ) {
+        durations.push(Number(timing.duration));
+      }
       getComputedTiming() {
         return { progress: 0.5 };
       }
@@ -117,6 +125,7 @@ export function createBrowserEnvironment() {
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   return {
     animations,
+    durations,
     setReducedMotion(reduced: boolean) {
       motionPreference.matches = reduced;
       motionPreference.addEventListener.mock.calls.forEach(([, listener]) =>

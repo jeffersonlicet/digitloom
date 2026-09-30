@@ -26,9 +26,7 @@ export class CanvasMotion {
   private cells: Cell[] = [];
   private atlas: Atlas | null = null;
   private clock: Clock | null = null;
-  private width = 0;
   private x = 0;
-  private paintLeft = 0;
   private paintWidth = 0;
   private y = 0;
   readonly surface: Surface;
@@ -48,6 +46,7 @@ export class CanvasMotion {
   }
   update(settings: Settings) {
     this.settings = settings;
+    this.immediate = false;
     if (!this.allowed || !settings.animated || !settings.duration) {
       this.settle();
       this.previous = settings.value;
@@ -58,7 +57,7 @@ export class CanvasMotion {
   refresh() {
     if (!this.allowed || !this.settings?.animated || !this.settings.duration)
       return;
-    this.immediate = true;
+    if (!pending.has(this)) this.immediate = true;
     schedule(this);
   }
   prepare() {
@@ -84,7 +83,7 @@ export class CanvasMotion {
         document,
         baseline: (bounds.height - ascent - descent) / 2 + ascent,
         spacing,
-        positions: new Map(),
+        advances: new Map(),
         glyphs: new Map(),
         font,
         color: style.color,
@@ -114,30 +113,32 @@ export class CanvasMotion {
       },
     );
     const characters = planNumberCharacters(this.settings.value);
-    const shape = style.fontVariantNumeric.includes("tabular-nums")
-      ? this.settings.value.replace(/\d/g, "0")
-      : this.settings.value;
-    let positions = atlas.positions.get(shape);
-    if (!positions) {
-      const text = this.host.querySelector(".rolling-number__text")?.firstChild;
-      if (!text) return null;
-      const range = document.createRange();
-      let offset = 0;
-      positions = characters.map((character) => {
+    const text = this.host.querySelector(".rolling-number__text")?.firstChild;
+    if (!text) return null;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, characters[0].text.length);
+    let x = range.getBoundingClientRect().left - bounds.left;
+    const rtl = style.direction === "rtl";
+    let offset = 0;
+    const positioned = characters.map((character) => {
+      let width = atlas.advances.get(character.text);
+      if (width === undefined || rtl) {
         range.setStart(text, offset);
-        offset += character.text.length;
-        range.setEnd(text, offset);
+        range.setEnd(text, offset + character.text.length);
         const box = range.getBoundingClientRect();
-        return { x: box.left - bounds.left, width: box.width };
-      });
-      if (atlas.positions.size >= 512) atlas.positions.clear();
-      atlas.positions.set(shape, positions);
-    }
+        width = box.width;
+        if (rtl) x = box.left - bounds.left;
+        if (atlas.advances.size >= 512) atlas.advances.clear();
+        atlas.advances.set(character.text, width);
+      }
+      offset += character.text.length;
+      const cell = { ...character, x };
+      x += width;
+      return cell;
+    });
     return {
-      characters: characters.map((cell, index) => ({
-        ...cell,
-        ...positions[index],
-      })),
+      characters: positioned,
       left: this.grid.scrollLeft + crop.left,
       top: this.grid.scrollTop + crop.top,
       atlas,
@@ -191,19 +192,24 @@ export class CanvasMotion {
       if (cell.digit === undefined) return cell;
       const old = positions.get(cell.key) ?? previous.get(cell.key) ?? 0;
       const from = centerReel(old);
+      let to = targetReelIndex(from, cell.digit, trend);
+      if (
+        !previous.has(cell.key) &&
+        !positions.has(cell.key) &&
+        cell.digit === 0
+      )
+        to += trend < 0 ? -10 : 10;
       return {
         ...cell,
         from,
-        to: targetReelIndex(from, cell.digit, trend),
+        to,
       };
     });
     this.previous = settings.value;
     this.atlas = prepared.atlas;
-    this.width = prepared.width;
     this.x = prepared.x;
     this.y = prepared.y;
-    this.paintLeft = this.x;
-    this.paintWidth = this.width + Math.max(8, -prepared.atlas.spacing + 4);
+    this.paintWidth = prepared.width + Math.max(8, -prepared.atlas.spacing + 4);
     this.surface.ratio = prepared.atlas.ratio;
     const canvas = this.surface.canvas;
     if (canvas.style.left !== `${prepared.left}px`)
@@ -272,7 +278,7 @@ export class CanvasMotion {
     );
 
     context.beginPath();
-    context.rect(this.paintLeft - 2, 0, this.paintWidth + 4, atlas.height);
+    context.rect(this.x - 2, 0, this.paintWidth + 4, atlas.height);
     context.clip();
     this.cells.forEach((cell) => {
       const current = glyph(atlas, cell.text);

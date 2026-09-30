@@ -24,7 +24,6 @@ export function glyph(atlas: Atlas, text: string): Glyph {
   context.fillText(text, 2, atlas.baseline);
   const result = {
     canvas,
-    width,
     inkTop: atlas.baseline - metrics.actualBoundingBoxAscent,
     inkBottom: atlas.baseline + metrics.actualBoundingBoxDescent,
   };

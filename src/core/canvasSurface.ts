@@ -2,6 +2,9 @@
 import type { Surface } from "./canvas.types.js";
 import { atlases } from "./glyphAtlas.js";
 export const surfaces = new WeakMap<HTMLElement, Surface>();
+function withoutOpacity(style: string) {
+  return style.replace(/(?:^|;)\s*opacity\s*:[^;]*/g, "");
+}
 export function getSurface(grid: HTMLElement): Surface {
   const existing = surfaces.get(grid);
   if (existing) {
@@ -40,7 +43,15 @@ export function getSurface(grid: HTMLElement): Surface {
   };
   const resized = new window.ResizeObserver(refresh);
   resized.observe(grid);
-  const changed = new window.MutationObserver(refresh);
+  const changed = new window.MutationObserver((records) => {
+    const layoutChanged = records.some((record) => {
+      if (record.target === canvas) return false;
+      if (record.attributeName !== "style") return true;
+      const current = (record.target as Element).getAttribute("style") ?? "";
+      return withoutOpacity(record.oldValue ?? "") !== withoutOpacity(current);
+    });
+    if (layoutChanged) refresh();
+  });
   for (
     let ancestor: Element | null = grid;
     ancestor;
@@ -48,7 +59,9 @@ export function getSurface(grid: HTMLElement): Surface {
   )
     changed.observe(ancestor, {
       attributes: true,
+      attributeOldValue: true,
       attributeFilter: ["class", "style"],
+      subtree: ancestor === grid,
     });
   let pixels = window.matchMedia(
     `(resolution: ${window.devicePixelRatio}dppx)`,

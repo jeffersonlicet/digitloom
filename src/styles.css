@@ -19,7 +19,6 @@
 .rolling-number__canvas {
   position: absolute;
   pointer-events: none;
-  user-select: none;
 }
 /* Transparent text preserves native selection while canvas supplies visible glyphs. */
 .rolling-number[data-rolling-ready] > .rolling-number__text {
