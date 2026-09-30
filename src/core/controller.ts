@@ -189,8 +189,7 @@ export class CanvasMotion {
         return { ...cell, from: oldCell.from, to: oldCell.to };
       }
       if (cell.digit === undefined) return cell;
-      const old =
-        positions.get(cell.key) ?? previous.get(cell.key) ?? cell.digit;
+      const old = positions.get(cell.key) ?? previous.get(cell.key) ?? 0;
       const from = centerReel(old);
       return {
         ...cell,

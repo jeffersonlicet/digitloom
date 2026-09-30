@@ -28,6 +28,40 @@ function mount(group?: HTMLElement) {
   return { host, text, controller };
 }
 describe("canvas lifecycle", () => {
+  it("rolls added decimal places during a currency precision change", async () => {
+    const browser = createBrowserEnvironment();
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Range) {
+        return { left: this.startOffset * 8, width: 8 } as DOMRect;
+      },
+    );
+    const { controller, host, text } = mount();
+    text.textContent = "+τ0.22";
+    controller.update({ ...settings, value: text.textContent });
+    browser.show(host);
+    await Promise.resolve();
+    expect(browser.animations).toHaveLength(0);
+    expect(host.dataset.rollingReady).toBeUndefined();
+    text.textContent = "+τ0.0007706";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    const animation = browser.animations[0];
+    expect(animation).toBeDefined();
+    if (!animation)
+      throw new Error("The precision change did not start motion.");
+    vi.spyOn(animation.effect, "getComputedTiming").mockReturnValue({
+      progress: 0.3,
+    } as ComputedEffectTiming);
+    browser.context.drawImage.mockClear();
+    const frame = vi.mocked(requestAnimationFrame).mock.calls.slice(-1)[0]?.[0];
+    frame?.(105);
+    const tail = browser.context.drawImage.mock.calls.filter(
+      ([, x]) => x === 78,
+    );
+    expect(tail).toHaveLength(2);
+    expect(tail.every(([, , y]) => y !== 0)).toBe(true);
+  });
+
   it.each(["hide", "disable", "destroy"] as const)(
     "redraws the surviving neighbor when a counter is %s",
     async (action) => {

@@ -58,3 +58,11 @@ Neither found a blocking in-scope defect. Final browser evidence closes the pend
 ## Residual risks
 
 Neighbor geometry can remain stale after sibling width changes without a group resize. This behavior predates the patch. Shared resize and scroll paths retain their contracts by inspection, but lack dedicated multi-counter assertions. Zoom remains covered by existing viewport checks. Browser smoke runs use synthetic data and do not prove acceptance in the running wallet extension.
+
+## Follow-up: currency precision
+
+The user reported that the added 7706 decimal positions appeared without rolling. Missing previous positions used the target digit. They now start at zero during value changes. Initial rendering stays static through the existing visibility and previous-value policy.
+The regression fails with the old fallback and passes with the zero origin. All 32 release tests and checks pass. Runtime gzip is 4,985 bytes.
+Both reviewers confirmed final diff SHA256 8970ca8805436aae11c87bd066be236e269d4c240db472abbcd49992b1e831dc.
+Browser check: +τ0.22 becomes +τ0.0007706 with 825ms linear timing. The last digit's pixel hash stays 321,315,924 in the old renderer. In the patch it changes from 220,007,628 at 180ms to 321,315,924 at rest. The digit remains visible and finishes at the same exact glyph.
+Version 1.0.1 publication and Pages deployment passed. npm confirms 1.0.1. Follow-up 1.0.2 publication and wallet installation remain pending.
