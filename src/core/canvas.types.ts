@@ -36,7 +36,6 @@ export interface Surface {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
   clients: number;
-  resized: boolean;
   bleed: number;
   ratio: number;
   motions: Set<CanvasMotion>;

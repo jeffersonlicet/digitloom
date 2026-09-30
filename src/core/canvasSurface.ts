@@ -23,7 +23,6 @@ export function getSurface(grid: HTMLElement): Surface {
     canvas,
     context,
     clients: 1,
-    resized: false,
     bleed: 8,
     ratio: window.devicePixelRatio,
     motions: new Set(),

@@ -9,7 +9,13 @@ import {
 } from "./characters.js";
 import { getSurface, surfaces } from "./canvasSurface.js";
 import { glyph, atlases } from "./glyphAtlas.js";
-import { active, pending, schedule, stopIdleFrame } from "./canvasScheduler.js";
+import {
+  active,
+  pending,
+  schedule,
+  invalidateSurface,
+  stopIdleFrame,
+} from "./canvasScheduler.js";
 import type { Settings, Cell, Atlas, Surface, Clock } from "./canvas.types.js";
 export class CanvasMotion {
   private destroyed = false;
@@ -25,7 +31,7 @@ export class CanvasMotion {
   private paintLeft = 0;
   private paintWidth = 0;
   private y = 0;
-  private surface: Surface;
+  readonly surface: Surface;
   private grid: HTMLElement;
   private readonly stop: () => void;
   constructor(private host: HTMLSpanElement) {
@@ -172,7 +178,6 @@ export class CanvasMotion {
     const layoutOnly =
       this.immediate && this.previous === settings.value && this.clock;
     const oldCells = new Map(this.cells.map((cell) => [cell.key, cell]));
-    this.clear();
     if (!layoutOnly) this.releaseClock();
     const trend = compareNumberValues(this.previous, settings.value);
     const previous = new Map(
@@ -215,7 +220,6 @@ export class CanvasMotion {
     );
     const height = Math.ceil(prepared.gridHeight * this.surface.ratio);
     if (canvas.width !== width || canvas.height !== height) {
-      this.surface.resized = true;
       canvas.width = width;
       canvas.height = height;
       canvas.style.width = `${prepared.gridWidth + this.surface.bleed}px`;
@@ -245,13 +249,7 @@ export class CanvasMotion {
     this.host.dataset.rollingReady = "";
     active.add(this);
   }
-  /** Restores unchanged counters when a shared backing store changes size. */
-  repaintSurface() {
-    if (!this.surface.resized) return;
-    this.surface.resized = false;
-    const progress = new Map<Clock, number>();
-    this.surface.motions.forEach((motion) => motion.draw(progress));
-  }
+  /** Draws this counter without clearing neighboring pixels on the shared surface. */
   draw(progressCache = new Map<Clock, number>()) {
     const atlas = this.atlas;
     const context = this.surface.context;
@@ -263,7 +261,6 @@ export class CanvasMotion {
       );
       if (this.clock) progressCache.set(this.clock, progress);
     }
-    this.clear();
     context.save();
     context.imageSmoothingQuality = "high";
     context.setTransform(
@@ -329,23 +326,13 @@ export class CanvasMotion {
     if (this.clock && --this.clock.users === 0) this.clock.animation.cancel();
     this.clock = null;
   }
-  clear() {
-    if (!this.atlas) return;
-    const ratio = this.atlas.ratio;
-    const left = Math.floor((this.paintLeft - 2) * ratio);
-    const top = Math.floor(this.y * ratio) - 1;
-    const right = Math.ceil((this.paintLeft + this.paintWidth + 2) * ratio);
-    const bottom = Math.ceil((this.y + this.atlas.height) * ratio) + 1;
-    this.surface.context.setTransform(1, 0, 0, 1, 0, 0);
-    this.surface.context.clearRect(left, top, right - left, bottom - top);
-  }
   settle() {
     this.cells = [];
     pending.delete(this);
     active.delete(this);
     this.releaseClock();
-    this.clear();
     delete this.host.dataset.rollingReady;
+    invalidateSurface(this.surface);
     stopIdleFrame();
   }
   destroy() {
