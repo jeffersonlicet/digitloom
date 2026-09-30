@@ -1,0 +1,73 @@
+/** @fileoverview Builds the runtime, stylesheet, and isolated public type declarations. */
+import { build, context } from "esbuild";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import ts from "typescript";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const output = path.join(root, "dist");
+await mkdir(output, { recursive: true });
+
+const options = {
+  absWorkingDir: root,
+  entryPoints: { index: "src/index.ts", styles: "src/styles.css" },
+  outdir: output,
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2020",
+  jsx: "automatic",
+  minify: true,
+  external: ["react", "react/jsx-runtime"],
+  sourcemap: true,
+  banner: { js: '"use client";' },
+  plugins: [
+    {
+      name: "public-declarations",
+      setup(builder) {
+        builder.onEnd(async (result) => {
+          if (result.errors.length) return;
+          for (const file of [
+            "index.ts",
+            "RollingNumber.tsx",
+            "RollingNumberGroup.tsx",
+          ]) {
+            const fileName = path.join(root, "src", file);
+            const source = await readFile(fileName, "utf8");
+            // Isolated emission does not run a project typecheck.
+            const declaration = ts.transpileDeclaration(source, {
+              fileName,
+              compilerOptions: {
+                target: ts.ScriptTarget.ES2020,
+                module: ts.ModuleKind.ESNext,
+                jsx: ts.JsxEmit.ReactJSX,
+              },
+            });
+            if (declaration.diagnostics?.length) {
+              throw new Error(
+                ts.formatDiagnostics(declaration.diagnostics, {
+                  getCanonicalFileName: (name) => name,
+                  getCurrentDirectory: () => root,
+                  getNewLine: () => "\n",
+                }),
+              );
+            }
+            await writeFile(
+              path.join(output, file.replace(/\.tsx?$/, ".d.ts")),
+              declaration.outputText,
+            );
+          }
+        });
+      },
+    },
+  ],
+};
+
+if (process.argv.includes("--watch")) {
+  const builder = await context(options);
+  await builder.watch();
+  console.log("Watching Digitloom source files.");
+} else {
+  await build(options);
+}

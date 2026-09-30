@@ -1,0 +1,11 @@
+import { RollingNumber } from "digitloom";
+import "digitloom/styles.css";
+
+export function Balance({ value }) {
+  return (
+    <RollingNumber
+      value={value}
+      className="balance"
+    />
+  );
+}

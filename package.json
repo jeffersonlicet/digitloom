@@ -1,0 +1,81 @@
+{
+  "name": "digitloom",
+  "version": "1.0.0",
+  "description": "Selectable rolling numbers for React with shared canvas animation.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/styles.css"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "PERFORMANCE.md",
+    "RELEASING.md"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "react",
+    "numbers",
+    "animation",
+    "counter",
+    "web-animations"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run size && npm run build:demo",
+    "prepack": "npm run build",
+    "demo": "npm run build && npm run size && npm run size:compare && vite demo --host 127.0.0.1",
+    "build:demo": "npm run build && npm run size && npm run size:compare && vite build demo --base=./",
+    "size": "node scripts/check-size.mjs",
+    "size:compare": "node scripts/compare-size.mjs"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@number-flow/react": "0.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@typescript-eslint/eslint-plugin": "8.71.0",
+    "@typescript-eslint/parser": "8.71.0",
+    "esbuild": "0.28.1",
+    "eslint": "10.11.0",
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2",
+    "prismjs": "1.30.0",
+    "react": "19.2.3",
+    "react-countup": "6.5.3",
+    "react-dom": "19.2.3",
+    "typescript": "5.9.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Jefferson Licet",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jeffersonlicet/digitloom.git"
+  },
+  "homepage": "https://jeffersonlicet.github.io/digitloom/",
+  "bugs": {
+    "url": "https://github.com/jeffersonlicet/digitloom/issues"
+  }
+}

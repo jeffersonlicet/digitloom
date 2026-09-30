@@ -1,0 +1,7 @@
+<RollingNumber
+  value="$1,234.50"
+  duration={500}
+  easing="ease-out"
+  animated={true}
+  className="balance"
+/>

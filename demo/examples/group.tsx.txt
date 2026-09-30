@@ -1,0 +1,7 @@
+import { RollingNumber, RollingNumberGroup } from "digitloom";
+
+<RollingNumberGroup className="balances">
+  {balances.map(({ id, value }) => (
+    <RollingNumber key={id} value={value} />
+  ))}
+</RollingNumberGroup>;

@@ -1,0 +1,35 @@
+.rolling-number {
+  display: inline-grid;
+  position: relative;
+  white-space: pre;
+  font-kerning: none;
+}
+.rolling-number-group {
+  position: relative;
+}
+.rolling-number__text {
+  grid-area: 1 / 1;
+  z-index: 1;
+  user-select: text;
+}
+.rolling-number__text::selection {
+  color: HighlightText;
+  background-color: Highlight;
+}
+.rolling-number__canvas {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+}
+/* Transparent text preserves native selection while canvas supplies visible glyphs. */
+.rolling-number[data-rolling-ready] > .rolling-number__text {
+  color: transparent;
+}
+@media (forced-colors: active) {
+  .rolling-number[data-rolling-ready] > .rolling-number__text {
+    color: inherit;
+  }
+  .rolling-number__canvas {
+    display: none;
+  }
+}
