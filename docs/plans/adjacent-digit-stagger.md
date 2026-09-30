@@ -2,7 +2,7 @@
 
 ## Status
 
-- Overall: working
+- Overall: done
 - Updated: 2026-09-30
 
 ## Issue and scope
@@ -28,7 +28,7 @@ A focused shared-clock collaborator creates at most two clocks per timing config
 - [x] Browser verification checks the minified runtime and wallet spring easing.
 - [x] Full release checks pass within 5,120 gzip bytes.
 - [x] Two reviewers confirm the same final content identifier.
-- [ ] Signed source, successful npm workflow, published artifact, and wallet installation are verified separately.
+- [x] Signed source, successful npm workflow, published artifact, and wallet installation are verified separately.
 
 Authentication, data persistence, migrations, and external input schemas are unchanged. Existing timing validation remains intact. Forced colors, reduced motion, and hidden counters retain their existing behavior.
 
@@ -41,12 +41,12 @@ The stagger adds at most 24 ms to total settlement. Dense grids must retain batc
 - [x] Implement shared delayed clocks and focused regressions.
 - [x] Run release checks and browser acceptance.
 - [x] Obtain two independent reviews.
-- [ ] [pending] Sign and release through Actions.
-- [ ] [pending] Install and verify the published package in the wallet.
+- [x] Sign and release through Actions.
+- [x] Install and verify the published package in the wallet.
 
 ## Evidence and final outcome
 
-Implementation and release checks passed. Independent review and publication remain pending.
+Implementation, independent reviews, publication, and wallet integration passed. Residual acceptance limits are listed below.
 
 ## Validation evidence
 
@@ -74,8 +74,23 @@ Both reviewers confirmed content identifier `7cf5a9021552fcb08146f61c95d218ff4e6
 The browser's 16 px check measures DOM font size, not canvas glyph size. The exact wallet shrink trigger remains unconfirmed.
 There is no package-size margin. Browser zoom and live extension acceptance remain unverified for this patch.
 
-## Release blocker
+## Publication and wallet evidence
 
-Two configured YubiKey signing attempts failed with `invalid format?` after requesting user presence.
-No 1.0.5 commit, tag, push, or publication occurred. The reviewed scope remains staged.
-The wallet retains installed 1.0.4 and its matching manifests and lockfile. Reconnection is requested before the signing retry.
+The first signing attempts failed. A user-requested retry succeeded without changing the signer or disabling signing.
+
+- Signed library commit: `b85799e715d296856ebb5891ea20ee6f920bd996`. GitHub reports a valid verified signature.
+- Signed tag: `v1.0.5`. Local tag verification passed.
+- [npm release workflow](https://github.com/jeffersonlicet/digitloom/actions/runs/36785538092): succeeded.
+- [Pages workflow](https://github.com/jeffersonlicet/digitloom/actions/runs/36785538739): succeeded.
+- Public npm metadata lists 1.0.5 as latest. The downloaded archive matches its SHA-512 integrity, the checked local archive, and the Actions archive.
+- The live website references the checked demo build assets.
+- npm initially cached a 404 for the archive. pnpm cached the verified public archive, then the unchanged frozen lockfile installed successfully.
+- Installed wallet JavaScript and CSS match the published package bytes.
+- Seven focused wallet integration tests, TypeScript, formatting, and diff checks passed.
+- Signed wallet commit: `d91d237b49598eb181f235c7de86e8d8f26ed323`. GitHub reports a valid verified signature.
+- [Wallet PR #1007](https://github.com/CrucibleAILabs/wallet/pull/1007) targets `2.1.5` and contains the four-file dependency update.
+- Normal wallet hooks ran. No extension build, start, or restart occurred. Unrelated work remains untouched.
+
+The exact wallet shrink trigger, patch zoom acceptance, and live extension acceptance remain unverified.
+The fresh three-library capture did not complete. The website retains its historical capture.
+The 1,000-counter regression fixture exceeds the 60 Hz frame budget in both versions.
