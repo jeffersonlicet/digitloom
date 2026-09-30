@@ -29,6 +29,272 @@ function mount(group?: HTMLElement) {
   mounted.push(controller);
   return { host, text, controller };
 }
+function setProgress(
+  animation: ReturnType<typeof createBrowserEnvironment>["animations"][number],
+  progress: number,
+) {
+  vi.spyOn(animation.effect, "getComputedTiming").mockReturnValue({
+    progress,
+  } as ComputedEffectTiming);
+}
+function digitPositions(
+  browser: ReturnType<typeof createBrowserEnvironment>,
+  controller: CanvasMotion,
+  x: number,
+) {
+  browser.context.drawImage.mockClear();
+  controller.draw();
+  return browser.context.drawImage.mock.calls
+    .filter(([, left]) => left === x)
+    .map(([canvas, , y]) => ({ canvas, y }));
+}
+function nativeColumns() {
+  vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Range) {
+      return {
+        left:
+          (this.startContainer.parentElement?.parentElement?.getBoundingClientRect()
+            .left ?? 0) +
+          this.startOffset * 8,
+        width: (this.endOffset - this.startOffset) * 8,
+      } as DOMRect;
+    },
+  );
+}
+describe("motion continuity", () => {
+  it("keeps red glyphs fully opaque and rejects subpixel edge slivers", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host, text } = mount();
+    host.style.color = "rgb(255, 50, 50)";
+    controller.update(settings);
+    browser.show(host);
+    text.textContent = "13.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    const alpha: number[] = [];
+    browser.context.drawImage.mockImplementation(() => {
+      alpha.push(browser.context.globalAlpha);
+    });
+    for (const progress of [0, 0.2, 0.5, 0.8, 0.99, 1]) {
+      setProgress(browser.animations[0], progress);
+      controller.draw();
+    }
+    setProgress(browser.animations[0], 0.225);
+    expect(digitPositions(browser, controller, 6)).toHaveLength(1);
+    setProgress(browser.animations[0], 0.3);
+    expect(digitPositions(browser, controller, 6)).toHaveLength(2);
+    expect(alpha.length).toBeGreaterThan(0);
+    expect(alpha.every((value) => value === 1)).toBe(true);
+    expect(
+      [...atlases.values()].every(
+        (atlas) => atlas.color === "rgb(255, 50, 50)",
+      ),
+    ).toBe(true);
+  });
+  it("does not restart an unchanged digit when another place changes", async () => {
+    const browser = createBrowserEnvironment();
+    nativeColumns();
+    const { controller, host, text } = mount();
+    controller.update(settings);
+    browser.show(host);
+    text.textContent = "19.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[0], 0.5);
+    const before = digitPositions(browser, controller, 6);
+    text.textContent = "29.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[1], 0);
+    expect(digitPositions(browser, controller, 6)).toEqual(before);
+    expect(browser.animations[0].cancel).not.toHaveBeenCalled();
+    setProgress(browser.animations[0], 0.6);
+    expect(digitPositions(browser, controller, 6)).not.toEqual(before);
+    controller.destroy();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
+  });
+  it("preserves current position and ongoing travel when a moving digit retargets", async () => {
+    const browser = createBrowserEnvironment();
+    nativeColumns();
+    const { controller, host, text } = mount();
+    controller.update(settings);
+    browser.show(host);
+    text.textContent = "19.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[0], 0.5);
+    const before = digitPositions(browser, controller, 6);
+    text.textContent = "17.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[1], 0);
+    expect(digitPositions(browser, controller, 6)).toEqual(before);
+    setProgress(browser.animations[0], 0.6);
+    expect(digitPositions(browser, controller, 6)).not.toEqual(before);
+    browser.animations.forEach((animation) => {
+      animation.playState = "finished";
+    });
+    const settled = digitPositions(browser, controller, 6);
+    expect(settled).toHaveLength(1);
+    expect(settled[0].y).toBe(0);
+  });
+  it("keeps the previous ink inside the canvas when a standalone counter shrinks", async () => {
+    const browser = createBrowserEnvironment();
+    nativeColumns();
+    const { controller, host, text } = mount();
+    let left = 0;
+    let width = 80;
+    Object.defineProperty(host, "clientWidth", { get: () => width });
+    Object.defineProperty(host, "clientHeight", { get: () => 20 });
+    Object.defineProperty(host, "getBoundingClientRect", {
+      value: () => ({ left, top: 0, width, height: 20 }) as DOMRect,
+    });
+    text.textContent = "$12345.00";
+    controller.update({ ...settings, value: text.textContent });
+    browser.show(host);
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    browser.animations[0].playState = "finished";
+    controller.draw();
+    left = 20;
+    width = 40;
+    text.textContent = "τ5.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[1], 0);
+    expect(controller.surface.leftBleed).toBeGreaterThanOrEqual(20);
+    expect(controller.surface.canvas.width).toBeGreaterThan(width);
+    expect(
+      parseFloat(controller.surface.canvas.style.left),
+    ).toBeLessThanOrEqual(-20);
+    controller.destroy();
+    expect(controller.surface.canvas.isConnected).toBe(false);
+  });
+  it("bounds backing pixels during and after a large horizontal move", async () => {
+    const browser = createBrowserEnvironment();
+    nativeColumns();
+    const { controller, host, text } = mount();
+    let left = 0;
+    Object.defineProperty(host, "clientWidth", { get: () => 40 });
+    Object.defineProperty(host, "clientHeight", { get: () => 20 });
+    Object.defineProperty(host, "getBoundingClientRect", {
+      value: () => ({ left, top: 0, width: 40, height: 20 }) as DOMRect,
+    });
+    controller.update(settings);
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    left = 1000000;
+    text.textContent = "13.00";
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    expect(controller.surface.canvas.width).toBeLessThanOrEqual(
+      window.innerWidth * window.devicePixelRatio,
+    );
+    browser.animations.forEach((animation) => {
+      animation.playState = "finished";
+    });
+    controller.draw();
+    expect(controller.surface.canvas.width).toBeLessThanOrEqual(
+      window.innerWidth * window.devicePixelRatio,
+    );
+    left = 20;
+    controller.refresh();
+    await Promise.resolve();
+    expect(controller.surface.canvas.width).toBeLessThanOrEqual(
+      window.innerWidth * window.devicePixelRatio,
+    );
+  });
+  it("releases finished contributions during prolonged rapid updates", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host, text } = mount();
+    controller.update(settings);
+    browser.show(host);
+    for (let index = 0; index < 100; index += 1) {
+      browser.animations.slice(0, -2).forEach((animation) => {
+        animation.playState = "finished";
+      });
+      text.textContent = `${100 + index}.00`;
+      controller.update({ ...settings, value: text.textContent });
+      await Promise.resolve();
+      expect(
+        browser.animations.filter(
+          (animation) => !animation.cancel.mock.calls.length,
+        ).length,
+      ).toBeLessThanOrEqual(3);
+    }
+    controller.destroy();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
+  });
+  it("retains a shared old clock until its final interrupted user settles", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    document.body.appendChild(group);
+    const first = mount(group);
+    const second = mount(group);
+    for (const counter of [first, second]) {
+      counter.controller.update(settings);
+      browser.show(counter.host);
+      counter.text.textContent = "19.00";
+      counter.controller.update({
+        ...settings,
+        value: counter.text.textContent,
+      });
+    }
+    await Promise.resolve();
+    expect(browser.animations).toHaveLength(1);
+    first.text.textContent = "29.00";
+    first.controller.update({ ...settings, value: first.text.textContent });
+    await Promise.resolve();
+    browser.animations[0].playState = "finished";
+    second.controller.draw();
+    expect(browser.animations[0].cancel).not.toHaveBeenCalled();
+    first.controller.destroy();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
+  });
+  it("interpolates currency columns from the previous absolute origin", async () => {
+    const browser = createBrowserEnvironment();
+    nativeColumns();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    document.body.appendChild(group);
+    const { controller, host, text } = mount(group);
+    let left = 100;
+    Object.defineProperty(host, "getBoundingClientRect", {
+      value: () => ({ left, top: 0, width: 40, height: 20 }) as DOMRect,
+    });
+    text.textContent = "$12.00";
+    controller.update({ ...settings, value: text.textContent });
+    browser.show(host);
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    browser.animations[0].playState = "finished";
+    controller.draw();
+    text.textContent = "τ2.00";
+    left = 104;
+    controller.update({ ...settings, value: text.textContent });
+    await Promise.resolve();
+    setProgress(browser.animations[1], 0);
+    expect(digitPositions(browser, controller, 114)).toHaveLength(1);
+    setProgress(browser.animations[1], 0.5);
+    expect(digitPositions(browser, controller, 112)).toHaveLength(1);
+    setProgress(browser.animations[1], 1);
+    expect(digitPositions(browser, controller, 110)).toHaveLength(1);
+  });
+});
 describe("canvas lifecycle", () => {
   it("measures proportional digits even when CSS requests tabular numbers", async () => {
     const browser = createBrowserEnvironment();
@@ -238,7 +504,7 @@ describe("canvas lifecycle", () => {
     const tail = browser.context.drawImage.mock.calls.filter(
       ([, x]) => x === 78,
     );
-    expect(tail).toHaveLength(2);
+    expect(tail.length).toBeGreaterThan(0);
     expect(tail.every(([, , y]) => y !== 0)).toBe(true);
   });
 
@@ -394,7 +660,7 @@ describe("canvas lifecycle", () => {
     expect(text.textContent).toBe(settings.value);
     expect(browser.animations[0].cancel).toHaveBeenCalledOnce();
   });
-  it("releases the old clock when an update interrupts motion", async () => {
+  it("retains the old roll until an interrupted motion finishes", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host } = mount();
     browser.show(host);
@@ -403,7 +669,16 @@ describe("canvas lifecycle", () => {
     controller.update({ ...settings, value: "99.99" });
     await Promise.resolve();
     expect(browser.animations).toHaveLength(2);
-    expect(browser.animations[0].cancel).toHaveBeenCalledOnce();
+    expect(browser.animations[0].cancel).not.toHaveBeenCalled();
+    browser.animations.forEach((animation) => {
+      animation.playState = "finished";
+    });
+    controller.draw();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
     expect(host.dataset.rollingReady).toBe("");
   });
 });

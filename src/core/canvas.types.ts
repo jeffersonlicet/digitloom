@@ -26,15 +26,17 @@ export interface Atlas {
 export interface Cell {
   key: string;
   text: string;
-  from?: number;
   to?: number;
   x: number;
+  offsetX?: number;
+  rolls?: { delta: number; clock: Clock }[];
 }
 export interface Surface {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
   clients: number;
   bleed: number;
+  leftBleed: number;
   ratio: number;
   motions: Set<CanvasMotion>;
   onScroll: () => void;

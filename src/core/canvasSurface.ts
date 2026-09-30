@@ -27,6 +27,7 @@ export function getSurface(grid: HTMLElement): Surface {
     context,
     clients: 1,
     bleed: 8,
+    leftBleed: 0,
     ratio: window.devicePixelRatio,
     motions: new Set(),
     stopLayout: () => {},

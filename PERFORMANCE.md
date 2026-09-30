@@ -36,7 +36,7 @@ These observations do not establish a universal ranking or a guarantee for anoth
 
 ## Runtime and checks
 
-JavaScript and CSS total 5,027 bytes gzip (4.91 KiB). The enforced ceiling is 5 KiB. React, types, source maps, documentation, and the demo are excluded.
+JavaScript and CSS total 5,112 bytes gzip (4.99 KiB). The enforced ceiling is 5 KiB. React, types, source maps, documentation, and the demo are excluded.
 The release passed formatting, lint, TypeScript, 27 unit tests, package-size checks, and standalone builds. The runtime dependency audit found no vulnerabilities.
 Chrome zoom was checked at 200%. The visible canvas rebuilt at four pixels per CSS pixel. The final hero digit remained visible.
 Other browser engines and real mobile devices have not been visually verified.

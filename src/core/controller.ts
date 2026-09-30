@@ -1,4 +1,5 @@
 /** @fileoverview Coordinates selectable text and cached canvas digit motion. */
+import { motionProgress } from "./motionProgress.js";
 import { canvasViewport } from "./canvasViewport.js";
 import { observeNumberMotion } from "./visibility.js";
 import {
@@ -26,7 +27,10 @@ export class CanvasMotion {
   private cells: Cell[] = [];
   private atlas: Atlas | null = null;
   private clock: Clock | null = null;
+  private clocks = new Set<Clock>();
+  private paintLeft = 0;
   private x = 0;
+  private origin = 0;
   private paintWidth = 0;
   private y = 0;
   readonly surface: Surface;
@@ -98,6 +102,8 @@ export class CanvasMotion {
     const borderLeft = parseFloat(gridStyle.borderLeftWidth) || 0;
     const borderTop = parseFloat(gridStyle.borderTopWidth) || 0;
     const viewport = view.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportWidth = viewport?.width ?? view.innerWidth;
     const crop = canvasViewport(
       {
         left: gridBounds.left + borderLeft,
@@ -106,11 +112,15 @@ export class CanvasMotion {
         height: this.grid.clientHeight,
       },
       {
-        left: viewport?.offsetLeft ?? 0,
+        left: viewportLeft,
         top: viewport?.offsetTop ?? 0,
-        width: viewport?.width ?? view.innerWidth,
+        width: viewportWidth,
         height: viewport?.height ?? view.innerHeight,
       },
+    );
+    const leftLimit = Math.min(
+      viewportWidth,
+      Math.max(0, gridBounds.left + borderLeft + crop.left - viewportLeft),
     );
     const characters = planNumberCharacters(this.settings.value);
     const text = this.host.querySelector(".rolling-number__text")?.firstChild;
@@ -144,8 +154,11 @@ export class CanvasMotion {
       atlas,
       width: bounds.width,
       x: bounds.left - gridBounds.left - borderLeft - crop.left,
+      origin: bounds.left,
       y: bounds.top - gridBounds.top - borderTop - crop.top,
       gridWidth: crop.width,
+      leftLimit,
+      rightLimit: Math.max(0, viewportWidth - crop.width - leftLimit),
       gridHeight: crop.height,
     };
   }
@@ -157,84 +170,23 @@ export class CanvasMotion {
       atlas: Atlas;
       width: number;
       x: number;
+      origin: number;
       y: number;
       gridWidth: number;
+      leftLimit: number;
+      rightLimit: number;
       gridHeight: number;
     } | null,
     clocks: Map<string, Clock>,
   ) {
     const settings = this.settings;
     if (!prepared || !settings) return;
-    const progress = Number(
-      this.clock?.animation.effect?.getComputedTiming().progress ?? 1,
-    );
-    const positions = new Map(
-      (this.clock ? this.cells : []).map((cell) => [
-        cell.key,
-        cell.from === undefined || cell.to === undefined
-          ? undefined
-          : cell.from + (cell.to - cell.from) * progress,
-      ]),
-    );
-    const layoutOnly =
-      this.immediate && this.previous === settings.value && this.clock;
+    const progress = motionProgress(this.clock);
+    const layoutOnly = this.previous === settings.value && this.clock;
     const oldCells = new Map(this.cells.map((cell) => [cell.key, cell]));
-    if (!layoutOnly) this.releaseClock();
-    const trend = compareNumberValues(this.previous, settings.value);
-    const previous = new Map(
-      planNumberCharacters(this.previous).map((cell) => [cell.key, cell.digit]),
-    );
-    this.cells = prepared.characters.map((cell) => {
-      const oldCell = oldCells.get(cell.key);
-      if (layoutOnly && oldCell) {
-        return { ...cell, from: oldCell.from, to: oldCell.to };
-      }
-      if (cell.digit === undefined) return cell;
-      const old = positions.get(cell.key) ?? previous.get(cell.key) ?? 0;
-      const from = centerReel(old);
-      let to = targetReelIndex(from, cell.digit, trend);
-      if (
-        !previous.has(cell.key) &&
-        !positions.has(cell.key) &&
-        cell.digit === 0
-      )
-        to += trend < 0 ? -10 : 10;
-      return {
-        ...cell,
-        from,
-        to,
-      };
-    });
-    this.previous = settings.value;
-    this.atlas = prepared.atlas;
-    this.x = prepared.x;
-    this.y = prepared.y;
-    this.paintWidth = prepared.width + Math.max(8, -prepared.atlas.spacing + 4);
-    this.surface.ratio = prepared.atlas.ratio;
-    const canvas = this.surface.canvas;
-    if (canvas.style.left !== `${prepared.left}px`)
-      canvas.style.left = `${prepared.left}px`;
-    if (canvas.style.top !== `${prepared.top}px`)
-      canvas.style.top = `${prepared.top}px`;
-    this.surface.bleed = Math.max(
-      this.surface.bleed,
-      -prepared.atlas.spacing + 4,
-    );
-    const width = Math.ceil(
-      (prepared.gridWidth + this.surface.bleed) * this.surface.ratio,
-    );
-    const height = Math.ceil(prepared.gridHeight * this.surface.ratio);
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
-      canvas.height = height;
-      canvas.style.width = `${prepared.gridWidth + this.surface.bleed}px`;
-      canvas.style.height = `${prepared.gridHeight}px`;
-    }
     const duration = this.immediate ? 0 : settings.duration;
-    this.immediate = false;
-    if (layoutOnly) return;
     const key = `${duration}|${settings.easing}`;
-    let clock = clocks.get(key);
+    let clock = layoutOnly || clocks.get(key);
     if (!clock) {
       const animation = new Animation(
         new KeyframeEffect(null, [], {
@@ -249,8 +201,89 @@ export class CanvasMotion {
       clock = { animation, users: 0 };
       clocks.set(key, clock);
     }
-    clock.users += 1;
+    const trend = compareNumberValues(this.previous, settings.value);
+    const previous = new Map(
+      planNumberCharacters(this.previous).map((cell) => [cell.key, cell.digit]),
+    );
+    this.cells = prepared.characters.map((cell) => {
+      const oldCell = oldCells.get(cell.key);
+      if (layoutOnly && oldCell) {
+        return {
+          ...oldCell,
+          x: cell.x,
+        };
+      }
+      const positioned = {
+        ...cell,
+        offsetX: oldCell
+          ? this.origin -
+            prepared.origin +
+            oldCell.x -
+            cell.x +
+            (oldCell.offsetX ?? 0) * (1 - progress)
+          : 0,
+      };
+      if (cell.digit === undefined) return positioned;
+      const from = centerReel(oldCell?.to ?? previous.get(cell.key) ?? 0);
+      let to = targetReelIndex(from, cell.digit, trend);
+      if (!previous.has(cell.key) && cell.digit === 0)
+        to += trend < 0 ? -10 : 10;
+      const rolls = (oldCell?.rolls ?? []).filter(
+        (roll) => roll.clock.animation.playState !== "finished",
+      );
+      if (to !== from) rolls.push({ delta: to - from, clock });
+      return { ...positioned, to, rolls };
+    });
     this.clock = clock;
+    this.syncClocks(
+      new Set([
+        clock,
+        ...this.cells.flatMap((cell) =>
+          (cell.rolls ?? []).map((roll) => roll.clock),
+        ),
+      ]),
+    );
+    this.previous = settings.value;
+    this.atlas = prepared.atlas;
+    this.x = prepared.x;
+    this.origin = prepared.origin;
+    this.y = prepared.y;
+    const offsets = this.cells.map((cell) => cell.offsetX ?? 0);
+    this.paintLeft = Math.min(0, ...offsets);
+    this.paintWidth =
+      prepared.width +
+      Math.max(0, ...offsets) -
+      this.paintLeft +
+      Math.max(8, -prepared.atlas.spacing + 4);
+    this.surface.ratio = prepared.atlas.ratio;
+    const canvas = this.surface.canvas;
+    this.surface.leftBleed = Math.min(
+      prepared.leftLimit,
+      Math.max(this.surface.leftBleed, -this.x - this.paintLeft),
+    );
+    this.surface.bleed = Math.min(
+      prepared.rightLimit,
+      Math.max(
+        this.surface.bleed,
+        this.x + this.paintLeft + this.paintWidth - prepared.gridWidth,
+      ),
+    );
+    const left = prepared.left - this.surface.leftBleed;
+    if (canvas.style.left !== `${left}px`) canvas.style.left = `${left}px`;
+    if (canvas.style.top !== `${prepared.top}px`)
+      canvas.style.top = `${prepared.top}px`;
+    const surfaceWidth =
+      prepared.gridWidth + this.surface.bleed + this.surface.leftBleed;
+    const width = Math.ceil(surfaceWidth * this.surface.ratio);
+    const height = Math.ceil(prepared.gridHeight * this.surface.ratio);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      canvas.style.width = `${surfaceWidth}px`;
+      canvas.style.height = `${prepared.gridHeight}px`;
+    }
+    this.immediate = false;
+    if (layoutOnly) return;
     this.host.dataset.rollingReady = "";
     active.add(this);
   }
@@ -259,13 +292,7 @@ export class CanvasMotion {
     const atlas = this.atlas;
     const context = this.surface.context;
     if (!atlas || !context || !this.cells.length) return;
-    let progress = this.clock ? progressCache.get(this.clock) : 1;
-    if (progress === undefined) {
-      progress = Number(
-        this.clock?.animation.effect?.getComputedTiming().progress ?? 1,
-      );
-      if (this.clock) progressCache.set(this.clock, progress);
-    }
+    const progress = motionProgress(this.clock, progressCache);
     context.save();
     context.imageSmoothingQuality = "high";
     context.setTransform(
@@ -273,17 +300,26 @@ export class CanvasMotion {
       0,
       0,
       atlas.ratio,
-      0,
+      this.surface.leftBleed * atlas.ratio,
       this.y * atlas.ratio,
     );
 
     context.beginPath();
-    context.rect(this.x - 2, 0, this.paintWidth + 4, atlas.height);
+    context.rect(
+      this.x + this.paintLeft - 2,
+      0,
+      this.paintWidth + 4,
+      atlas.height,
+    );
     context.clip();
     this.cells.forEach((cell) => {
       const current = glyph(atlas, cell.text);
-      const x = Math.round((this.x + cell.x) * atlas.ratio) / atlas.ratio;
-      if (cell.from === undefined || cell.to === undefined) {
+      const x =
+        Math.round(
+          (this.x + cell.x + (cell.offsetX ?? 0) * (1 - progress)) *
+            atlas.ratio,
+        ) / atlas.ratio;
+      if (cell.to === undefined) {
         context.drawImage(
           current.canvas,
           x - 2,
@@ -292,7 +328,14 @@ export class CanvasMotion {
           current.canvas.height / atlas.ratio,
         );
       } else {
-        const position = cell.from + (cell.to - cell.from) * progress;
+        const position =
+          cell.to -
+          (cell.rolls ?? []).reduce(
+            (offset, roll) =>
+              offset +
+              roll.delta * (1 - motionProgress(roll.clock, progressCache)),
+            0,
+          );
         const index = Math.floor(position);
         for (let offset = 0; offset <= 1; offset += 1) {
           const image = glyph(
@@ -305,11 +348,8 @@ export class CanvasMotion {
             Math.min(atlas.height, y + image.inkBottom) -
               Math.max(0, y + image.inkTop),
           );
-          const alpha = Math.min(
-            1,
-            visibleInk / Math.max(1, atlas.height * 0.14),
-          );
-          context.globalAlpha = alpha * alpha;
+          // Skip subpixel ink slivers without changing the glyph color.
+          if (visibleInk * atlas.ratio < 1) continue;
           context.drawImage(
             image.canvas,
             x - 2,
@@ -317,18 +357,33 @@ export class CanvasMotion {
             image.canvas.width / atlas.ratio,
             image.canvas.height / atlas.ratio,
           );
-          context.globalAlpha = 1;
         }
       }
     });
     context.restore();
-    if (this.clock?.animation.playState === "finished") {
+    if (
+      [...this.clocks].every(
+        (clock) => clock.animation.playState === "finished",
+      )
+    ) {
       active.delete(this);
       this.releaseClock();
+      this.cells.forEach((cell) => {
+        delete cell.rolls;
+      });
     }
   }
+  private syncClocks(next: Set<Clock>) {
+    this.clocks.forEach((clock) => {
+      if (!next.has(clock) && --clock.users === 0) clock.animation.cancel();
+    });
+    next.forEach((clock) => {
+      if (!this.clocks.has(clock)) clock.users += 1;
+    });
+    this.clocks = next;
+  }
   releaseClock() {
-    if (this.clock && --this.clock.users === 0) this.clock.animation.cancel();
+    this.syncClocks(new Set());
     this.clock = null;
   }
   settle() {
