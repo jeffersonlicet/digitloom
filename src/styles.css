@@ -8,7 +8,6 @@
   position: relative;
 }
 .rolling-number__text {
-  grid-area: 1 / 1;
   z-index: 1;
   user-select: text;
 }

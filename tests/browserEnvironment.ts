@@ -91,6 +91,7 @@ export function createBrowserEnvironment() {
     currentTime: number;
   }[] = [];
   const durations: number[] = [];
+  const timings: KeyframeEffectOptions[] = [];
   vi.stubGlobal(
     "KeyframeEffect",
     class {
@@ -100,6 +101,7 @@ export function createBrowserEnvironment() {
         timing: KeyframeEffectOptions,
       ) {
         durations.push(Number(timing.duration));
+        timings.push(timing);
       }
       getComputedTiming() {
         return { progress: 0.5 };
@@ -126,6 +128,7 @@ export function createBrowserEnvironment() {
   return {
     animations,
     durations,
+    timings,
     setReducedMotion(reduced: boolean) {
       motionPreference.matches = reduced;
       motionPreference.addEventListener.mock.calls.forEach(([, listener]) =>

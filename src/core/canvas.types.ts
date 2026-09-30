@@ -13,11 +13,11 @@ export interface Glyph {
   inkBottom: number;
 }
 export interface Atlas {
-  document: Document;
+  owner: Document;
   glyphs: Map<string, Glyph>;
-  font: string;
-  color: string;
-  height: number;
+  typeface: string;
+  ink: string;
+  lineHeight: number;
   ratio: number;
   baseline: number;
   spacing: number;
@@ -32,17 +32,16 @@ export interface Cell {
   rolls?: { delta: number; clock: Clock }[];
 }
 export interface Surface {
+  pixels: Partial<Record<"left" | "top" | "width" | "height", number>>;
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
-  clients: number;
   bleed: number;
   leftBleed: number;
-  ratio: number;
   motions: Set<CanvasMotion>;
-  onScroll: () => void;
   stopLayout: () => void;
 }
 export interface Clock {
   animation: Animation;
   users: number;
+  stagger?: Clock;
 }

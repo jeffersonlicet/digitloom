@@ -1,4 +1,5 @@
 /** @fileoverview Coordinates selectable text and cached canvas digit motion. */
+import { sharedClock, staggerClock } from "./sharedClock.js";
 import { motionProgress } from "./motionProgress.js";
 import { canvasViewport } from "./canvasViewport.js";
 import { observeNumberMotion } from "./visibility.js";
@@ -8,7 +9,7 @@ import {
   targetReelIndex,
   compareNumberValues,
 } from "./characters.js";
-import { getSurface, surfaces } from "./canvasSurface.js";
+import { getSurface, surfaces, setCanvasPixels } from "./canvasSurface.js";
 import { glyph, atlases } from "./glyphAtlas.js";
 import {
   active,
@@ -37,9 +38,8 @@ export class CanvasMotion {
   private grid: HTMLElement;
   private readonly stop: () => void;
   constructor(private host: HTMLSpanElement) {
-    const grid = host.closest<HTMLElement>("[data-digitloom-group]") ?? host;
-    this.grid = grid;
-    this.surface = getSurface(grid);
+    this.grid = host.closest<HTMLElement>("[data-digitloom-group]") ?? host;
+    this.surface = getSurface(this.grid);
     this.surface.motions.add(this);
     this.stop = observeNumberMotion(host, (allowed) => {
       if (allowed === this.allowed) return;
@@ -84,14 +84,14 @@ export class CanvasMotion {
       const ascent = metrics.fontBoundingBoxAscent;
       const descent = metrics.fontBoundingBoxDescent;
       atlas = {
-        document,
+        owner: document,
         baseline: (bounds.height - ascent - descent) / 2 + ascent,
         spacing,
         advances: new Map(),
         glyphs: new Map(),
-        font,
-        color: style.color,
-        height: bounds.height,
+        typeface: font,
+        ink: style.color,
+        lineHeight: bounds.height,
         ratio,
       };
       if (atlases.size >= 32) atlases.clear();
@@ -123,7 +123,7 @@ export class CanvasMotion {
       Math.max(0, gridBounds.left + borderLeft + crop.left - viewportLeft),
     );
     const characters = planNumberCharacters(this.settings.value);
-    const text = this.host.querySelector(".rolling-number__text")?.firstChild;
+    const text = this.host.firstElementChild?.firstChild;
     if (!text) return null;
     const range = document.createRange();
     range.setStart(text, 0);
@@ -185,22 +185,11 @@ export class CanvasMotion {
     const layoutOnly = this.previous === settings.value && this.clock;
     const oldCells = new Map(this.cells.map((cell) => [cell.key, cell]));
     const duration = this.immediate ? 0 : settings.duration;
-    const key = `${duration}|${settings.easing}`;
-    let clock = layoutOnly || clocks.get(key);
-    if (!clock) {
-      const animation = new Animation(
-        new KeyframeEffect(null, [], {
-          duration,
-          easing: settings.easing,
-          fill: "both",
-        }),
-        this.host.ownerDocument.timeline,
-      );
-      animation.currentTime = 0;
-      animation.play();
-      clock = { animation, users: 0 };
-      clocks.set(key, clock);
-    }
+    const timeline = this.host.ownerDocument.timeline;
+    const clock =
+      layoutOnly || sharedClock(clocks, timeline, duration, settings.easing);
+    let previousDelta = 0;
+    let staggered = false;
     const trend = compareNumberValues(this.previous, settings.value);
     const previous = new Map(
       planNumberCharacters(this.previous).map((cell) => [cell.key, cell.digit]),
@@ -223,7 +212,10 @@ export class CanvasMotion {
             (oldCell.offsetX ?? 0) * (1 - progress)
           : 0,
       };
-      if (cell.digit === undefined) return positioned;
+      if (cell.digit === undefined) {
+        previousDelta = 0;
+        return positioned;
+      }
       const from = centerReel(oldCell?.to ?? previous.get(cell.key) ?? 0);
       let to = targetReelIndex(from, cell.digit, trend);
       if (!previous.has(cell.key) && cell.digit === 0)
@@ -231,7 +223,16 @@ export class CanvasMotion {
       const rolls = (oldCell?.rolls ?? []).filter(
         (roll) => roll.clock.animation.playState !== "finished",
       );
-      if (to !== from) rolls.push({ delta: to - from, clock });
+      const delta = to - from;
+      staggered = delta !== 0 && delta === previousDelta && !staggered;
+      previousDelta = delta;
+      if (delta)
+        rolls.push({
+          delta,
+          clock: staggered
+            ? staggerClock(clock, timeline, duration, settings.easing)
+            : clock,
+        });
       return { ...positioned, to, rolls };
     });
     this.clock = clock;
@@ -255,7 +256,7 @@ export class CanvasMotion {
       Math.max(0, ...offsets) -
       this.paintLeft +
       Math.max(8, -prepared.atlas.spacing + 4);
-    this.surface.ratio = prepared.atlas.ratio;
+    const ratio = prepared.atlas.ratio;
     const canvas = this.surface.canvas;
     this.surface.leftBleed = Math.min(
       prepared.leftLimit,
@@ -269,19 +270,19 @@ export class CanvasMotion {
       ),
     );
     const left = prepared.left - this.surface.leftBleed;
-    if (canvas.style.left !== `${left}px`) canvas.style.left = `${left}px`;
-    if (canvas.style.top !== `${prepared.top}px`)
-      canvas.style.top = `${prepared.top}px`;
+    setCanvasPixels(this.surface, "left", left);
+    setCanvasPixels(this.surface, "top", prepared.top);
     const surfaceWidth =
       prepared.gridWidth + this.surface.bleed + this.surface.leftBleed;
-    const width = Math.ceil(surfaceWidth * this.surface.ratio);
-    const height = Math.ceil(prepared.gridHeight * this.surface.ratio);
+    const width = Math.ceil(surfaceWidth * ratio);
+    const height = Math.ceil(prepared.gridHeight * ratio);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
-      canvas.style.width = `${surfaceWidth}px`;
-      canvas.style.height = `${prepared.gridHeight}px`;
     }
+    // CSS geometry can change while rounded backing dimensions stay equal.
+    setCanvasPixels(this.surface, "width", surfaceWidth);
+    setCanvasPixels(this.surface, "height", prepared.gridHeight);
     this.immediate = false;
     if (layoutOnly) return;
     this.host.dataset.rollingReady = "";
@@ -309,17 +310,17 @@ export class CanvasMotion {
       this.x + this.paintLeft - 2,
       0,
       this.paintWidth + 4,
-      atlas.height,
+      atlas.lineHeight,
     );
     context.clip();
     this.cells.forEach((cell) => {
-      const current = glyph(atlas, cell.text);
       const x =
         Math.round(
           (this.x + cell.x + (cell.offsetX ?? 0) * (1 - progress)) *
             atlas.ratio,
         ) / atlas.ratio;
       if (cell.to === undefined) {
+        const current = glyph(atlas, cell.text);
         context.drawImage(
           current.canvas,
           x - 2,
@@ -342,12 +343,10 @@ export class CanvasMotion {
             atlas,
             String((((index + offset) % 10) + 10) % 10),
           );
-          const y = (index + offset - position) * atlas.height;
-          const visibleInk = Math.max(
-            0,
-            Math.min(atlas.height, y + image.inkBottom) -
-              Math.max(0, y + image.inkTop),
-          );
+          const y = (index + offset - position) * atlas.lineHeight;
+          const visibleInk =
+            Math.min(atlas.lineHeight, y + image.inkBottom) -
+            Math.max(0, y + image.inkTop);
           // Skip subpixel ink slivers without changing the glyph color.
           if (visibleInk * atlas.ratio < 1) continue;
           context.drawImage(
@@ -402,9 +401,8 @@ export class CanvasMotion {
     this.settings = null;
     this.allowed = false;
     this.stop();
-    this.surface.clients -= 1;
     this.surface.motions.delete(this);
-    if (!this.surface.clients) {
+    if (!this.surface.motions.size) {
       this.surface.stopLayout();
       this.surface.canvas.remove();
       surfaces.delete(this.grid);

@@ -70,8 +70,11 @@ Use separate groups for separate scroll areas. A counter outside a group owns it
 | `animated`  | `boolean` | `true`                       | Enable digit motion.                                    |
 
 Invalid values and timing throw before rendering or updating.
-The first render stays still. Symbols, added characters, and width changes update immediately.
-Interrupted digits continue from their current position. Horizontal movement is not animated.
+The first render stays still. Existing columns move smoothly when their native positions change.
+Interrupted digits retain unfinished rolling contributions. Settled unchanged digits remain still.
+Equal neighboring digit travel uses an alternating 24 ms delay, capped at 10% of the duration.
+Easing, direction, and per-digit duration stay unchanged. Delayed digits finish up to 24 ms later.
+Symbols and unchanged digits break the stagger sequence.
 
 ## Accessibility and browser support
 

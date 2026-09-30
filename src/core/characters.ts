@@ -42,7 +42,7 @@ export function planNumberCharacters(value: string): NumberCharacter[] {
     key: "suffix",
     text: value.slice(match.index + numeric.length),
   });
-  return characters.filter((character) => character.text !== "");
+  return characters.filter((character) => character.text);
 }
 
 /** Compares decimal strings without converting balances to floating point. */

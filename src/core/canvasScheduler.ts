@@ -10,7 +10,7 @@ let queued = false;
 function repaint(surfaces: Set<Surface>) {
   const progress = new Map<Clock, number>();
   surfaces.forEach((surface) => {
-    if (!surface.clients) return;
+    if (!surface.motions.size) return;
     const { context, canvas } = surface;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);

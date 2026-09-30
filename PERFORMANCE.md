@@ -1,6 +1,6 @@
 # Performance check
 
-The demo contains one release check with dense grids and balance lists. Download the raw observations from the chart.
+The demo contains one historical comparison capture from Digitloom 1.0.0 with dense grids and balance lists. Download the raw observations from the chart.
 
 Digitloom 1.0.0, grouped NumberFlow 0.6.2, and React CountUp 6.5.3 ran separately in two rounds. The second round reversed the library order.
 Each round uses one changed-value warmup and targets eight measured updates. Updates are scheduled every 100 ms with 350 ms motion.
@@ -36,11 +36,31 @@ These observations do not establish a universal ranking or a guarantee for anoth
 
 ## Runtime and checks
 
-JavaScript and CSS total 5,112 bytes gzip (4.99 KiB). The enforced ceiling is 5 KiB. React, types, source maps, documentation, and the demo are excluded.
-The release passed formatting, lint, TypeScript, 27 unit tests, package-size checks, and standalone builds. The runtime dependency audit found no vulnerabilities.
-Chrome zoom was checked at 200%. The visible canvas rebuilt at four pixels per CSS pixel. The final hero digit remained visible.
+Digitloom 1.0.5 JavaScript and CSS total 5,120 bytes gzip (5.00 KiB). The enforced ceiling is 5 KiB. React, types, source maps, documentation, and the demo are excluded.
+The release passed formatting, lint, TypeScript, 59 tests, package-size checks, and standalone builds. The runtime dependency audit found no vulnerabilities.
+The original comparison release checked Chrome zoom at 200%. Its visible canvas rebuilt at four pixels per CSS pixel. The final hero digit remained visible.
+Version 1.0.5 verified delayed clocks, currency changes, and CSS sizing regressions. Browser zoom is not yet rechecked for this patch.
+A new three-library capture stopped responding during a heavy sample. The website retains the historical capture instead of incomplete measurements.
 Other browser engines and real mobile devices have not been visually verified.
 
-Measured runtime SHA-256:
+Version 1.0.5 runtime SHA-256:
 
-`2a67a3e758dad8ceb729cc5d5b97cf572dafbc8a8634d175933faa0ee48e0bbe`
+`9ce37ab304d3e54e645703ad9b37b96ecfd127b688b7a52d5951d6c984e86a31`
+
+## 1.0.5 regression check
+
+The minified runtime ran against the wallet's published 1.0.4 runtime in two rounds with reversed order.
+Each visible grid used 40 columns, a 1,100 px width, 10 px text, and 14 px line height.
+Each round used a warmup and eight updates with 350 ms linear motion, scheduled every 100 ms.
+The final update settled for 400 ms. Host activity was not isolated.
+
+| Counters | 1.0.4 frame p95, rounds 1 / 2 (ms) | 1.0.5 frame p95, rounds 1 / 2 (ms) | 1.0.4 update p95, rounds 1 / 2 (ms) | 1.0.5 update p95, rounds 1 / 2 (ms) |
+| -------- | ---------------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------- |
+| 100      | 10.0 / 10.1                        | 9.9 / 9.9                          | 6.5 / 3.8                           | 7.6 / 11.2                          |
+| 250      | 10.1 / 10.1                        | 10.0 / 10.2                        | 21.1 / 20.3                         | 8.5 / 26.0                          |
+| 500      | 16.9 / 16.4                        | 15.1 / 16.4                        | 35.5 / 47.4                         | 16.5 / 26.7                         |
+| 1000     | 58.0 / 58.5                        | 56.6 / 49.9                        | 80.2 / 50.4                         | 73.7 / 48.6                         |
+
+Update p95 includes the React flush and controller microtask batch. Frame p95 measures requestAnimationFrame scheduling, not GPU presentation.
+The 1,000-counter workload exceeds the 60 Hz frame budget in both versions. These results do not establish a universal improvement.
+This regression check is separate from the historical three-library website capture.

@@ -4,10 +4,10 @@ export const atlases = new Map<string, Atlas>();
 export function glyph(atlas: Atlas, text: string): Glyph {
   const cached = atlas.glyphs.get(text);
   if (cached) return cached;
-  const canvas = atlas.document.createElement("canvas");
+  const canvas = atlas.owner.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas 2D is unavailable.");
-  context.font = atlas.font;
+  context.font = atlas.typeface;
   context.fontKerning = "none";
   context.letterSpacing = `${atlas.spacing}px`;
   const metrics = context.measureText(text);
@@ -15,12 +15,12 @@ export function glyph(atlas: Atlas, text: string): Glyph {
   canvas.width = Math.ceil(
     (Math.max(width, metrics.actualBoundingBoxRight) + 4) * atlas.ratio,
   );
-  canvas.height = Math.ceil(atlas.height * atlas.ratio);
+  canvas.height = Math.ceil(atlas.lineHeight * atlas.ratio);
   context.scale(atlas.ratio, atlas.ratio);
-  context.font = atlas.font;
+  context.font = atlas.typeface;
   context.fontKerning = "none";
   context.letterSpacing = `${atlas.spacing}px`;
-  context.fillStyle = atlas.color;
+  context.fillStyle = atlas.ink;
   context.fillText(text, 2, atlas.baseline);
   const result = {
     canvas,

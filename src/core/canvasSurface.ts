@@ -7,10 +7,7 @@ function withoutOpacity(style: string) {
 }
 export function getSurface(grid: HTMLElement): Surface {
   const existing = surfaces.get(grid);
-  if (existing) {
-    existing.clients += 1;
-    return existing;
-  }
+  if (existing) return existing;
   const document = grid.ownerDocument;
   const window = document.defaultView;
   if (!window) throw new Error("Digitloom requires a browser document.");
@@ -22,20 +19,26 @@ export function getSurface(grid: HTMLElement): Surface {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas 2D is unavailable.");
   grid.appendChild(canvas);
+  const onScroll = () => {
+    surface.motions.forEach((motion) => motion.settle());
+  };
   const surface: Surface = {
+    pixels: {},
     canvas,
     context,
-    clients: 1,
     bleed: 8,
     leftBleed: 0,
-    ratio: window.devicePixelRatio,
     motions: new Set(),
-    stopLayout: () => {},
-    onScroll: () => {
-      surface.motions.forEach((motion) => motion.settle());
+    stopLayout: () => {
+      window.visualViewport?.removeEventListener("resize", refresh);
+      document.removeEventListener("scroll", onScroll, true);
+      resized.disconnect();
+      changed.disconnect();
+      pixels.removeEventListener("change", zoomed);
+      document.fonts.removeEventListener("loadingdone", fontsLoaded);
     },
   };
-  document.addEventListener("scroll", surface.onScroll, {
+  document.addEventListener("scroll", onScroll, {
     passive: true,
     capture: true,
   });
@@ -80,14 +83,17 @@ export function getSurface(grid: HTMLElement): Surface {
     refresh();
   };
   document.fonts.addEventListener("loadingdone", fontsLoaded);
-  surface.stopLayout = () => {
-    window.visualViewport?.removeEventListener("resize", refresh);
-    document.removeEventListener("scroll", surface.onScroll, true);
-    resized.disconnect();
-    changed.disconnect();
-    pixels.removeEventListener("change", zoomed);
-    document.fonts.removeEventListener("loadingdone", fontsLoaded);
-  };
   surfaces.set(grid, surface);
   return surface;
+}
+
+/** Updates display geometry without generating redundant style mutations. */
+export function setCanvasPixels(
+  surface: Surface,
+  property: "left" | "top" | "width" | "height",
+  value: number,
+) {
+  if (surface.pixels[property] === value) return;
+  surface.pixels[property] = value;
+  surface.canvas.style[property] = `${value}px`;
 }

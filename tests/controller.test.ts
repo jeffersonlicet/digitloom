@@ -62,6 +62,78 @@ function nativeColumns() {
   );
 }
 describe("motion continuity", () => {
+  it("updates fractional CSS dimensions without reallocating the backing store", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host } = mount();
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    const prepared = controller.prepare();
+    if (!prepared) throw new Error("The counter geometry was not prepared.");
+    const clocks = new Map();
+    controller.start(
+      {
+        ...prepared,
+        gridWidth: 100.2,
+        gridHeight: 20.2,
+        leftLimit: 0,
+        rightLimit: 0,
+      },
+      clocks,
+    );
+    const canvas = controller.surface.canvas;
+    const dimensions = [canvas.width, canvas.height];
+    controller.start(
+      {
+        ...prepared,
+        gridWidth: 100.6,
+        gridHeight: 20.6,
+        leftLimit: 0,
+        rightLimit: 0,
+      },
+      clocks,
+    );
+    expect([canvas.width, canvas.height]).toEqual(dimensions);
+    expect(canvas.style.width).toBe("100.6px");
+    expect(canvas.style.height).toBe("20.6px");
+  });
+  it("updates CSS dimensions when a pixel-ratio change retains backing dimensions", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host } = mount();
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    const prepared = controller.prepare();
+    if (!prepared) throw new Error("The counter geometry was not prepared.");
+    const clocks = new Map();
+    controller.start(
+      {
+        ...prepared,
+        gridWidth: 50,
+        gridHeight: 20,
+        leftLimit: 0,
+        rightLimit: 0,
+        atlas: { ...prepared.atlas, ratio: 2 },
+      },
+      clocks,
+    );
+    const canvas = controller.surface.canvas;
+    const dimensions = [canvas.width, canvas.height];
+    controller.start(
+      {
+        ...prepared,
+        gridWidth: 100,
+        gridHeight: 40,
+        leftLimit: 0,
+        rightLimit: 0,
+        atlas: { ...prepared.atlas, ratio: 1 },
+      },
+      clocks,
+    );
+    expect([canvas.width, canvas.height]).toEqual(dimensions);
+    expect(canvas.style.width).toBe("100px");
+    expect(canvas.style.height).toBe("40px");
+  });
   it("keeps red glyphs fully opaque and rejects subpixel edge slivers", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host, text } = mount();
@@ -86,9 +158,7 @@ describe("motion continuity", () => {
     expect(alpha.length).toBeGreaterThan(0);
     expect(alpha.every((value) => value === 1)).toBe(true);
     expect(
-      [...atlases.values()].every(
-        (atlas) => atlas.color === "rgb(255, 50, 50)",
-      ),
+      [...atlases.values()].every((atlas) => atlas.ink === "rgb(255, 50, 50)"),
     ).toBe(true);
   });
   it("does not restart an unchanged digit when another place changes", async () => {
@@ -225,7 +295,7 @@ describe("motion continuity", () => {
         browser.animations.filter(
           (animation) => !animation.cancel.mock.calls.length,
         ).length,
-      ).toBeLessThanOrEqual(3);
+      ).toBeLessThanOrEqual(4);
     }
     controller.destroy();
     expect(
@@ -382,12 +452,15 @@ describe("canvas lifecycle", () => {
     browser.show(host);
     controller.update(settings);
     await Promise.resolve();
-    const clock = browser.animations[0];
     top = 80;
     row.style.transform = "translateY(80px)";
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(browser.animations).toHaveLength(1);
-    expect(clock.cancel).not.toHaveBeenCalled();
+    expect(browser.animations).toHaveLength(2);
+    expect(
+      browser.animations.every(
+        (animation) => !animation.cancel.mock.calls.length,
+      ),
+    ).toBe(true);
     browser.context.setTransform.mockClear();
     controller.draw();
     expect(browser.context.setTransform).toHaveBeenCalledWith(
@@ -413,8 +486,9 @@ describe("canvas lifecycle", () => {
       controller.update({ ...settings, value: text.textContent });
       if (order === "after") controller.refresh();
       await Promise.resolve();
-      expect(browser.animations).toHaveLength(2);
-      expect(browser.durations).toEqual([350, 350]);
+      expect(browser.animations).toHaveLength(3);
+      expect(browser.durations).toEqual([350, 350, 350]);
+      expect(browser.timings.map(({ delay }) => delay)).toEqual([0, 24, 0]);
       expect(host.dataset.rollingReady).toBe("");
     },
   );
@@ -583,10 +657,14 @@ describe("canvas lifecycle", () => {
     await Promise.resolve();
     browser.setReducedMotion(true);
     expect(host.dataset.rollingReady).toBeUndefined();
-    expect(browser.animations[0].cancel).toHaveBeenCalledOnce();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
     controller.update({ ...settings, value: "99.99" });
     await Promise.resolve();
-    expect(browser.animations).toHaveLength(1);
+    expect(browser.animations).toHaveLength(2);
   });
   it("preserves the running clock when text width changes", async () => {
     const browser = createBrowserEnvironment();
@@ -597,8 +675,12 @@ describe("canvas lifecycle", () => {
     browser.show(host);
     controller.refresh();
     await Promise.resolve();
-    expect(browser.animations).toHaveLength(1);
-    expect(browser.animations[0].cancel).not.toHaveBeenCalled();
+    expect(browser.animations).toHaveLength(2);
+    expect(
+      browser.animations.every(
+        (animation) => !animation.cancel.mock.calls.length,
+      ),
+    ).toBe(true);
     expect(host.dataset.rollingReady).toBe("");
   });
   it("keeps offscreen and disabled updates as native text", async () => {
@@ -629,14 +711,22 @@ describe("canvas lifecycle", () => {
     second.controller.update(settings);
     await Promise.resolve();
     expect(group.querySelectorAll("canvas")).toHaveLength(1);
-    expect(browser.animations).toHaveLength(1);
+    expect(browser.animations).toHaveLength(2);
     first.controller.destroy();
     expect(group.querySelectorAll("canvas")).toHaveLength(1);
-    expect(browser.animations[0].cancel).not.toHaveBeenCalled();
+    expect(
+      browser.animations.every(
+        (animation) => !animation.cancel.mock.calls.length,
+      ),
+    ).toBe(true);
     second.controller.destroy();
     second.controller.destroy();
     expect(group.querySelectorAll("canvas")).toHaveLength(0);
-    expect(browser.animations[0].cancel).toHaveBeenCalledOnce();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
     expect(browser.disconnect).toHaveBeenCalledOnce();
   });
   it("cancels pending work when a counter unmounts before the batch", async () => {
@@ -668,7 +758,7 @@ describe("canvas lifecycle", () => {
     await Promise.resolve();
     controller.update({ ...settings, value: "99.99" });
     await Promise.resolve();
-    expect(browser.animations).toHaveLength(2);
+    expect(browser.animations).toHaveLength(4);
     expect(browser.animations[0].cancel).not.toHaveBeenCalled();
     browser.animations.forEach((animation) => {
       animation.playState = "finished";

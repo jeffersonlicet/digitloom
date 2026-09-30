@@ -8,9 +8,7 @@ export function motionProgress(
   if (!clock || clock.animation.playState === "finished") return 1;
   let progress = cache?.get(clock);
   if (progress === undefined) {
-    progress = Number(
-      clock.animation.effect?.getComputedTiming().progress ?? 1,
-    );
+    progress = clock.animation.effect?.getComputedTiming().progress ?? 1;
     cache?.set(clock, progress);
   }
   return progress;
