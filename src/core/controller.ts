@@ -292,7 +292,16 @@ export class CanvasMotion {
   draw(progressCache = new Map<Clock, number>()) {
     const atlas = this.atlas;
     const context = this.surface.context;
-    if (!atlas || !context || !this.cells.length) return;
+    if (!atlas || !this.clock) return;
+    // Keep layout history for the next update, but restore native text at rest.
+    if (
+      ![...this.clocks].some(
+        (clock) => clock.animation.playState !== "finished",
+      )
+    ) {
+      this.settle(true);
+      return;
+    }
     const progress = motionProgress(this.clock, progressCache);
     context.save();
     context.imageSmoothingQuality = "high";
@@ -360,17 +369,6 @@ export class CanvasMotion {
       }
     });
     context.restore();
-    if (
-      [...this.clocks].every(
-        (clock) => clock.animation.playState === "finished",
-      )
-    ) {
-      active.delete(this);
-      this.releaseClock();
-      this.cells.forEach((cell) => {
-        delete cell.rolls;
-      });
-    }
   }
   private syncClocks(next: Set<Clock>) {
     this.clocks.forEach((clock) => {
@@ -381,17 +379,19 @@ export class CanvasMotion {
     });
     this.clocks = next;
   }
-  releaseClock() {
+  settle(preserveLayout?: boolean) {
+    if (!preserveLayout) {
+      this.cells = [];
+      pending.delete(this);
+      invalidateSurface(this.surface);
+    }
+    active.delete(this);
     this.syncClocks(new Set());
     this.clock = null;
-  }
-  settle() {
-    this.cells = [];
-    pending.delete(this);
-    active.delete(this);
-    this.releaseClock();
+    this.cells.forEach((cell) => {
+      delete cell.rolls;
+    });
     delete this.host.dataset.rollingReady;
-    invalidateSurface(this.surface);
     stopIdleFrame();
   }
   destroy() {

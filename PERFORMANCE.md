@@ -64,3 +64,17 @@ The final update settled for 400 ms. Host activity was not isolated.
 Update p95 includes the React flush and controller microtask batch. Frame p95 measures requestAnimationFrame scheduling, not GPU presentation.
 The 1,000-counter workload exceeds the 60 Hz frame budget in both versions. These results do not establish a universal improvement.
 This regression check is separate from the historical three-library website capture.
+
+## 1.0.6 settled text check
+
+Version 1.0.6 restores native browser text after all digit phases finish. The shared canvas clears before the final frame.
+Completed counters retain layout history for later currency updates. They release roll references and shared clocks.
+
+The runtime totals 5,119 bytes gzip. The strict ceiling remains 5,120 bytes.
+All 63 tests, lint, TypeScript checks, runtime build, and demo build passed before the version update.
+Browser checks used loaded General Sans Medium, the wallet spring, an 825 ms duration, and repeated USD and TAO switches.
+At rest, native text retained its font size and color. The canvas contained no glyph pixels.
+The 1,000-counter regression verifies shared clock cleanup and native final text. It does not measure frame timing.
+
+The 200% CSS zoom check covers visible small samples. Larger samples were outside the viewport.
+Native browser zoom and live extension acceptance remain unverified. No new speed comparison is claimed for this patch.

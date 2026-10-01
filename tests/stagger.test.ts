@@ -85,10 +85,29 @@ describe("neighbor stagger", () => {
       browser.animations.forEach((animation) => {
         animation.playState = "finished";
       });
-      expect(positions(browser, motion, -2)).toEqual([0]);
-      expect(positions(browser, motion, 6)).toEqual([0]);
+      expect(positions(browser, motion, -2)).toEqual([]);
+      expect(positions(browser, motion, 6)).toEqual([]);
     },
   );
+  it("keeps delayed digits animated after the immediate phase finishes", async () => {
+    const browser = createBrowserEnvironment();
+    const { motion, host } = counter(browser, "11", "22");
+    await Promise.resolve();
+    browser.animations[0].playState = "finished";
+    motion.draw();
+    expect(host.dataset.rollingReady).toBe("");
+    expect(browser.animations[1].cancel).not.toHaveBeenCalled();
+    browser.animations[1].playState = "finished";
+    motion.draw();
+    await Promise.resolve();
+    expect(host.dataset.rollingReady).toBeUndefined();
+    expect(host.textContent).toBe("22");
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
+  });
   it("alternates phases across a longer equal run", async () => {
     const browser = createBrowserEnvironment();
     columns();
@@ -151,6 +170,30 @@ describe("neighbor stagger", () => {
     );
     expect(positions(browser, motion, 6)).not.toEqual(before);
     motion.destroy();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length === 1,
+      ),
+    ).toBe(true);
+  });
+  it("restores 1,000 native counters and releases both shared phases", async () => {
+    const browser = createBrowserEnvironment();
+    const hosts = Array.from(
+      { length: 1000 },
+      () => counter(browser, "11", "22").host,
+    );
+    await Promise.resolve();
+    expect(browser.animations).toHaveLength(2);
+    browser.animations.forEach((animation) => {
+      animation.playState = "finished";
+    });
+    browser.context.drawImage.mockClear();
+    const frame = vi.mocked(requestAnimationFrame).mock.calls.slice(-1)[0]?.[0];
+    frame?.(849);
+    expect(hosts.every((host) => host.dataset.rollingReady === undefined)).toBe(
+      true,
+    );
+    expect(browser.context.drawImage).not.toHaveBeenCalled();
     expect(
       browser.animations.every(
         (animation) => animation.cancel.mock.calls.length === 1,

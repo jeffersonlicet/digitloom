@@ -62,6 +62,51 @@ function nativeColumns() {
   );
 }
 describe("motion continuity", () => {
+  it("restores native text and clears settled glyphs after natural completion", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host } = mount();
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    browser.animations.forEach((animation) => {
+      animation.playState = "finished";
+    });
+    browser.context.drawImage.mockClear();
+    browser.context.clearRect.mockClear();
+    const frame = vi.mocked(requestAnimationFrame).mock.calls.slice(-1)[0]?.[0];
+    frame?.(825);
+    await Promise.resolve();
+    expect(host.dataset.rollingReady).toBeUndefined();
+    expect(browser.context.drawImage).not.toHaveBeenCalled();
+    expect(browser.context.clearRect).toHaveBeenCalledOnce();
+  });
+
+  it("restores one shared counter while its neighbor continues rolling", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    document.body.appendChild(group);
+    const first = mount(group);
+    const second = mount(group);
+    browser.show(first.host);
+    browser.show(second.host);
+    first.controller.update(settings);
+    second.controller.update({ ...settings, duration: 200 });
+    await Promise.resolve();
+    browser.animations.forEach((animation, index) => {
+      if (browser.durations[index] === 200) animation.playState = "finished";
+    });
+    browser.context.drawImage.mockClear();
+    const frame = vi.mocked(requestAnimationFrame).mock.calls.slice(-1)[0]?.[0];
+    frame?.(200);
+    expect(second.host.dataset.rollingReady).toBeUndefined();
+    expect(first.host.dataset.rollingReady).toBe("");
+    expect(browser.context.drawImage).toHaveBeenCalled();
+    expect(
+      browser.animations.find((_, index) => browser.durations[index] === 350)
+        ?.cancel,
+    ).not.toHaveBeenCalled();
+  });
   it("updates fractional CSS dimensions without reallocating the backing store", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host } = mount();
@@ -209,8 +254,9 @@ describe("motion continuity", () => {
       animation.playState = "finished";
     });
     const settled = digitPositions(browser, controller, 6);
-    expect(settled).toHaveLength(1);
-    expect(settled[0].y).toBe(0);
+    expect(settled).toHaveLength(0);
+    expect(host.dataset.rollingReady).toBeUndefined();
+    expect(text.textContent).toBe("17.00");
   });
   it("keeps the previous ink inside the canvas when a standalone counter shrinks", async () => {
     const browser = createBrowserEnvironment();
@@ -610,7 +656,7 @@ describe("canvas lifecycle", () => {
     },
   );
 
-  it("redraws settled neighbors after a partial shared-surface update", async () => {
+  it("keeps settled neighbors native after a partial shared-surface update", async () => {
     const browser = createBrowserEnvironment();
     const group = document.createElement("div");
     group.dataset.digitloomGroup = "";
@@ -647,6 +693,8 @@ describe("canvas lifecycle", () => {
       .mock.calls.slice(-1)[0]?.[0];
     nextFrame?.(250);
     expect(percentDraw).toHaveBeenCalledOnce();
+    expect(percent.host.dataset.rollingReady).toBeUndefined();
+    expect(amount.host.dataset.rollingReady).toBe("");
   });
 
   it("cancels motion when the reduced-motion preference changes", async () => {
@@ -769,6 +817,6 @@ describe("canvas lifecycle", () => {
         (animation) => animation.cancel.mock.calls.length === 1,
       ),
     ).toBe(true);
-    expect(host.dataset.rollingReady).toBe("");
+    expect(host.dataset.rollingReady).toBeUndefined();
   });
 });
