@@ -441,6 +441,8 @@ h1 {
   letter-spacing: -0.055em;
   color: var(--digitloom-green);
   font-size: clamp(48px, 10vw, 120px);
+  width: min(9ch, 100%);
+  text-align: center;
 }
 .playground,
 .browser-benchmark {
@@ -531,11 +533,4 @@ footer a:hover {
   font-size: 14px;
   color: #6e6e73;
   margin-bottom: 24px;
-}
-.intro-copy > .hero-evidence {
-  font-size: 12px;
-  line-height: 1.5;
-  color: #6e6e73;
-  margin: 16px auto 0;
-  max-width: 420px;
 }

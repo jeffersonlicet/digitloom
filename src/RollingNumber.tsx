@@ -35,8 +35,7 @@ export const RollingNumber: MemoExoticComponent<
   duration = 350,
   easing = "cubic-bezier(0.16,1,0.3,1)",
 }: RollingNumberProps) {
-  if (typeof value !== "string")
-    throw new TypeError("Digitloom value must be a formatted string.");
+  if (typeof value !== "string") throw new TypeError("Use a string.");
   const timing = useMemo(
     () => resolveAnimationTiming(duration, easing),
     [duration, easing],
@@ -58,7 +57,10 @@ export const RollingNumber: MemoExoticComponent<
   }, [animated, timing, value, className]);
   return (
     <span className={`rolling-number ${className}`} ref={visual}>
-      <span className="rolling-number__text">{value}</span>
+      <span className="rolling-number__text">
+        {value}
+        <span aria-hidden />
+      </span>
     </span>
   );
 });

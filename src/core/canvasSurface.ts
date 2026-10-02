@@ -2,22 +2,19 @@
 import type { Surface } from "./canvas.types.js";
 import { atlases } from "./glyphAtlas.js";
 export const surfaces = new WeakMap<HTMLElement, Surface>();
-function withoutOpacity(style: string) {
-  return style.replace(/(?:^|;)\s*opacity\s*:[^;]*/g, "");
-}
 export function getSurface(grid: HTMLElement): Surface {
   const existing = surfaces.get(grid);
   if (existing) return existing;
   const document = grid.ownerDocument;
   const window = document.defaultView;
-  if (!window) throw new Error("Digitloom requires a browser document.");
+  if (!window) throw new Error("No browser window.");
   const canvas = document.createElement("canvas");
   canvas.width = 0;
   canvas.height = 0;
   canvas.className = "rolling-number__canvas";
   canvas.setAttribute("aria-hidden", "true");
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas 2D is unavailable.");
+  if (!context) throw new Error("Canvas 2D required.");
   grid.appendChild(canvas);
   const onScroll = () => {
     surface.motions.forEach((motion) => motion.settle());
@@ -28,6 +25,7 @@ export function getSurface(grid: HTMLElement): Surface {
     context,
     bleed: 8,
     leftBleed: 0,
+    layoutChanges: new Set(),
     motions: new Set(),
     stopLayout: () => {
       window.visualViewport?.removeEventListener("resize", refresh);
@@ -49,10 +47,7 @@ export function getSurface(grid: HTMLElement): Surface {
   resized.observe(grid);
   const changed = new window.MutationObserver((records) => {
     const layoutChanged = records.some((record) => {
-      if (record.target === canvas) return false;
-      if (record.attributeName !== "style") return true;
-      const current = (record.target as Element).getAttribute("style") ?? "";
-      return withoutOpacity(record.oldValue ?? "") !== withoutOpacity(current);
+      return record.target !== canvas;
     });
     if (layoutChanged) refresh();
   });
@@ -63,7 +58,6 @@ export function getSurface(grid: HTMLElement): Surface {
   )
     changed.observe(ancestor, {
       attributes: true,
-      attributeOldValue: true,
       attributeFilter: ["class", "style"],
       subtree: ancestor === grid,
     });
@@ -78,7 +72,13 @@ export function getSurface(grid: HTMLElement): Surface {
   };
   pixels.addEventListener("change", zoomed);
   window.visualViewport?.addEventListener("resize", refresh);
-  const fontsLoaded = () => {
+  const loadedFaces = new WeakSet<FontFace>();
+  const fontsLoaded = (event: FontFaceSetLoadEvent) => {
+    // Font descriptors must stay fixed. Replace the face object to change them.
+    // Repeated face notifications must not restart measurement and glyph creation.
+    const newFaces = event.fontfaces.filter((face) => !loadedFaces.has(face));
+    if (!newFaces.length) return;
+    newFaces.forEach((face) => loadedFaces.add(face));
     atlases.clear();
     refresh();
   };

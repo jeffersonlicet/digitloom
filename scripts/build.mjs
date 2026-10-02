@@ -21,7 +21,7 @@ const options = {
   minify: true,
   // Audit this allowlist when canvas code changes. It must exclude browser and React properties.
   mangleProps:
-    /^(pixels|stagger|host|animation|owner|typeface|ink|lineHeight|offsetX|leftBleed|paintLeft|paintWidth|gridWidth|gridHeight|leftLimit|rightLimit|x|y|to|inkTop|inkBottom|glyphs|advances|rolls|delta|users|motions|stopLayout|onScroll|destroyed|settings|immediate|previous|allowed|cells|atlas|clocks|origin|grid|stop|clock|surface|clients|bleed|ratio|baseline|spacing|prepare|start|draw|syncClocks|settle|destroy|refresh|update|context|digit|notify|visible|changed|observer|media|text)$/,
+    /^(place|pixels|stagger|host|animation|owner|typeface|ink|lineHeight|offsetX|offsetY|leftBleed|paintLeft|paintWidth|gridWidth|gridHeight|leftLimit|rightLimit|clips|opacityLayers|flexParent|textWidth|layoutChanges|refreshForLayout|x|y|to|inkTop|inkBottom|glyphs|advances|rolls|delta|users|motions|stopLayout|onScroll|destroyed|settings|immediate|previous|allowed|cells|atlas|clocks|origin|grid|stop|clock|surface|clients|bleed|ratio|baseline|spacing|prepare|start|draw|syncClocks|settle|destroy|refresh|update|context|digit|notify|visible|changed|observer|media|text)$/,
   external: ["react", "react/jsx-runtime"],
   sourcemap: "external",
   banner: { js: '"use client";' },

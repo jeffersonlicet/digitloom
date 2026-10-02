@@ -1,6 +1,7 @@
 /** @fileoverview Preserves formatted text and plans digit positions and rolling direction. */
 export interface NumberCharacter {
-  key: string;
+  /** Stable position: i for integer, f for fraction, and g for a separator. */
+  place: string;
   text: string;
   digit?: number;
 }
@@ -10,36 +11,36 @@ const NUMBER_PATTERN = /[-+]?\d[\d,]*(?:\.\d+)?/;
 /** Keeps the caller's formatted text and identifies digits by decimal position. */
 export function planNumberCharacters(value: string): NumberCharacter[] {
   const match = NUMBER_PATTERN.exec(value);
-  if (!match) return [{ key: "literal", text: value }];
+  if (!match) return [{ place: "literal", text: value }];
 
   const numeric = match[0];
   const sign = /^[+-]/.test(numeric) ? numeric[0] : "";
   const [integer, fraction] = numeric.slice(sign.length).split(".");
   let position = integer.replace(/,/g, "").length;
   const characters: NumberCharacter[] = [
-    { key: "prefix", text: value.slice(0, match.index) + sign },
+    { place: "prefix", text: value.slice(0, match.index) + sign },
   ];
 
   for (const text of integer) {
     if (text === ",") {
-      characters.push({ key: `group:${position}`, text });
+      characters.push({ place: `g:${position}`, text });
     } else {
       position -= 1;
       characters.push({
-        key: `integer:${position}`,
+        place: `i:${position}`,
         text,
         digit: Number(text),
       });
     }
   }
   if (fraction !== undefined) {
-    characters.push({ key: "decimal", text: "." });
+    characters.push({ place: "decimal", text: "." });
     Array.from(fraction).forEach((text, index) => {
-      characters.push({ key: `fraction:${index}`, text, digit: Number(text) });
+      characters.push({ place: `f:${index}`, text, digit: Number(text) });
     });
   }
   characters.push({
-    key: "suffix",
+    place: "suffix",
     text: value.slice(match.index + numeric.length),
   });
   return characters.filter((character) => character.text);

@@ -6,12 +6,11 @@ import { useComparisonBenchmark } from "./comparison/useComparisonBenchmark";
 import { Controls } from "./Controls";
 import { usePlayground } from "./usePlayground";
 import { UsageGuide } from "./UsageGuide";
-import { frameAdvantage, sizeAdvantage } from "./claims";
 import { HeroCounter } from "./HeroCounter";
 
 export function App() {
   useEffect(() => {
-    document.title = `Digitloom — ${frameAdvantage}× faster. ${sizeAdvantage}× smaller.`;
+    document.title = "Digitloom — Rolling numbers for React";
   }, []);
   const benchmark = useComparisonBenchmark();
   const model = usePlayground(benchmark.busy);
@@ -25,21 +24,17 @@ export function App() {
           <a href="#demo">Demo</a>
           <a href="#comparison">Comparison</a>
           <a href="#getting-started">How to</a>
-          <span className="release">v1.0 · MIT</span>
+          <span className="release">v1.0.7 · MIT</span>
         </div>
       </header>
       <section className="intro">
         <div className="intro-copy">
-          <p className="hero-kicker">Rolling numbers for React</p>
+          <p className="hero-kicker">Digitloom for React</p>
           <h1>
-            {frameAdvantage}× faster.
+            Numbers in
             <br />
-            {sizeAdvantage}× smaller.
+            motion.
           </h1>
-          <p className="hero-evidence">
-            Frame gap p95 · 1,000-counter grid. Gzip bundle size. Both vs
-            NumberFlow.
-          </p>
         </div>
         <div className="hero-motion">
           <HeroCounter

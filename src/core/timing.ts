@@ -10,15 +10,13 @@ export function resolveAnimationTiming(
   easing: string,
 ): AnimationTiming {
   if (!Number.isFinite(duration) || duration < 0)
-    throw new RangeError(
-      "Digitloom duration must be a finite, nonnegative number.",
-    );
-  if (typeof easing !== "string" || !easing.trim())
-    throw new TypeError("Digitloom easing must be a CSS easing string.");
+    throw new RangeError("Use a finite duration >= 0.");
   if (
-    typeof CSS !== "undefined" &&
-    !CSS.supports("animation-timing-function", easing)
+    typeof easing !== "string" ||
+    !easing.trim() ||
+    (typeof CSS !== "undefined" &&
+      !CSS.supports("animation-timing-function", easing))
   )
-    throw new TypeError("Digitloom easing must be a valid CSS easing value.");
+    throw new TypeError("Use CSS easing.");
   return { duration, easing };
 }

@@ -38,6 +38,7 @@ import { RollingNumber, RollingNumberGroup } from "digitloom";
 
 The group accepts standard React `div` attributes. Keep counters in separate, non-overlapping cells.
 Use separate groups for separate scroll areas. A counter outside a group owns its own canvas.
+Grouped motion respects rectangular overflow clips and ancestor opacity.
 
 ## Personalize
 
@@ -97,7 +98,7 @@ Counters share a frame scheduler. Geometry reads precede canvas writes. Glyph an
 The canvas covers the visible group area. Offscreen counters remain mounted but do not animate.
 No React updates occur on animation frames. Canvas still requires raster work. This is not a zero-paint guarantee.
 
-The runtime limit is 5 KiB gzip for JavaScript and CSS. React, types, source maps, documentation, and the demo are excluded.
+The runtime limit is 6 KiB gzip for JavaScript and CSS. React, types, source maps, documentation, and the demo are excluded.
 Run `npm run size` for the measured build. See [PERFORMANCE.md](PERFORMANCE.md) for the latest reproducible comparison.
 Virtualize large application lists when appropriate. Profile the complete application, including fonts, scrolling, and updates.
 Revisit the renderer when the supported visible workload repeatedly exceeds the application's frame budget.

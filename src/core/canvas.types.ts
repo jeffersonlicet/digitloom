@@ -9,9 +9,11 @@ export interface Settings {
 }
 export interface Glyph {
   canvas: HTMLCanvasElement;
+  advance: number;
   inkTop: number;
   inkBottom: number;
 }
+export type Clip = [number, number, number, number];
 export interface Atlas {
   owner: Document;
   glyphs: Map<string, Glyph>;
@@ -23,20 +25,23 @@ export interface Atlas {
   spacing: number;
   advances: Map<string, number>;
 }
-export interface Cell {
-  key: string;
+export type Cell = {
+  place: string;
   text: string;
-  to?: number;
   x: number;
+  width: number;
   offsetX?: number;
-  rolls?: { delta: number; clock: Clock }[];
-}
+} & (
+  | { to?: undefined; rolls?: undefined }
+  | { to: number; rolls: { delta: number; clock: Clock }[] }
+);
 export interface Surface {
   pixels: Partial<Record<"left" | "top" | "width" | "height", number>>;
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
   bleed: number;
   leftBleed: number;
+  layoutChanges: Set<HTMLElement>;
   motions: Set<CanvasMotion>;
   stopLayout: () => void;
 }

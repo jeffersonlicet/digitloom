@@ -2,19 +2,19 @@
   "method": "ES2020 minified component bundles. React excluded. Digitloom CSS included. Separate assets gzipped at level 9.",
   "libraries": {
     "digitloom": {
-      "version": "1.0.6",
-      "bytes": 11726,
-      "gzipBytes": 5050
+      "version": "1.0.7",
+      "bytes": 13674,
+      "gzipBytes": 5781
     },
     "numberflow": {
       "version": "0.6.2",
       "bytes": 18928,
-      "gzipBytes": 6383
+      "gzipBytes": 6349
     },
     "countup": {
       "version": "6.5.3",
       "bytes": 14378,
-      "gzipBytes": 4979
+      "gzipBytes": 4999
     }
   }
 }

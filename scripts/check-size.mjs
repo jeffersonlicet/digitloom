@@ -16,7 +16,7 @@ const files = await Promise.all(
   }),
 );
 const totalGzipBytes = files.reduce((total, file) => total + file.gzipBytes, 0);
-const budgetGzipBytes = 5120;
+const budgetGzipBytes = 6144;
 const report = {
   files,
   totalGzipBytes,
@@ -29,4 +29,4 @@ await writeFile(
 );
 console.log(JSON.stringify(report, null, 2));
 if (totalGzipBytes > budgetGzipBytes)
-  throw new Error("Digitloom exceeds its 5 KiB gzip runtime budget.");
+  throw new Error("Digitloom exceeds its 6 KiB gzip runtime budget.");

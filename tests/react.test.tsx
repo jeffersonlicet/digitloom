@@ -10,7 +10,7 @@ describe("React public contract", () => {
     );
     expect(markup).toContain('class="rolling-number balance"');
     expect(markup).toContain(
-      '<span class="rolling-number__text">$1,234.50</span>',
+      '<span class="rolling-number__text">$1,234.50<span aria-hidden="true"></span></span>',
     );
     expect(markup).not.toContain("canvas");
     expect(markup.match(/\$1,234\.50/g)).toHaveLength(1);

@@ -21,15 +21,11 @@ describe("rolling number formatting", () => {
   it("retains decimal positions when another integer digit appears", () => {
     const old = planNumberCharacters("999.01");
     const next = planNumberCharacters("1,000.01");
-    expect(old.find((character) => character.key === "integer:0")?.digit).toBe(
-      9,
-    );
-    expect(next.find((character) => character.key === "integer:0")?.digit).toBe(
-      0,
-    );
+    expect(old.find((character) => character.place === "i:0")?.digit).toBe(9);
+    expect(next.find((character) => character.place === "i:0")?.digit).toBe(0);
     expect(
-      next.filter((character) => character.key.startsWith("fraction:")),
-    ).toEqual(old.filter((character) => character.key.startsWith("fraction:")));
+      next.filter((character) => character.place.startsWith("f:")),
+    ).toEqual(old.filter((character) => character.place.startsWith("f:")));
   });
 
   it("compares values below floating point precision and across a sign change", () => {

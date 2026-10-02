@@ -21,7 +21,7 @@
 }
 /* Transparent text preserves native selection while canvas supplies visible glyphs. */
 .rolling-number[data-rolling-ready] > .rolling-number__text {
-  color: transparent;
+  color: #0000;
 }
 @media (forced-colors: active) {
   .rolling-number[data-rolling-ready] > .rolling-number__text {
@@ -30,4 +30,11 @@
   .rolling-number__canvas {
     display: none;
   }
+}
+
+/* The empty marker exposes the native baseline without temporary DOM writes. */
+.rolling-number__text > span {
+  display: inline-block;
+  width: 0;
+  height: 0;
 }

@@ -23,13 +23,16 @@ function counter(
   const text = document.createElement("span");
   text.className = "rolling-number__text";
   text.textContent = before;
+  const baseline = document.createElement("span");
+  baseline.setAttribute("aria-hidden", "true");
+  text.appendChild(baseline);
   host.appendChild(text);
   document.body.appendChild(host);
   const motion = new CanvasMotion(host);
   mounted.push(motion);
   motion.update({ ...timing, duration, value: before });
   browser.show(host);
-  text.textContent = after;
+  text.childNodes[0].textContent = after;
   motion.update({ ...timing, duration, value: after });
   return { motion, host, text };
 }
@@ -155,7 +158,7 @@ describe("neighbor stagger", () => {
     await Promise.resolve();
     progress(browser, 0.5, 0.25);
     const before = positions(browser, motion, 6);
-    text.textContent = "33";
+    text.childNodes[0].textContent = "33";
     motion.update({ ...timing, value: "33" });
     await Promise.resolve();
     browser.animations.slice(2).forEach((animation) => {

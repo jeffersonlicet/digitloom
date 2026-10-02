@@ -6,14 +6,13 @@ export function glyph(atlas: Atlas, text: string): Glyph {
   if (cached) return cached;
   const canvas = atlas.owner.createElement("canvas");
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas 2D is unavailable.");
+  if (!context) throw new Error("Canvas 2D required.");
   context.font = atlas.typeface;
   context.fontKerning = "none";
   context.letterSpacing = `${atlas.spacing}px`;
   const metrics = context.measureText(text);
-  const width = metrics.width;
   canvas.width = Math.ceil(
-    (Math.max(width, metrics.actualBoundingBoxRight) + 4) * atlas.ratio,
+    (Math.max(metrics.width, metrics.actualBoundingBoxRight) + 4) * atlas.ratio,
   );
   canvas.height = Math.ceil(atlas.lineHeight * atlas.ratio);
   context.scale(atlas.ratio, atlas.ratio);
@@ -24,6 +23,7 @@ export function glyph(atlas: Atlas, text: string): Glyph {
   context.fillText(text, 2, atlas.baseline);
   const result = {
     canvas,
+    advance: metrics.width,
     inkTop: atlas.baseline - metrics.actualBoundingBoxAscent,
     inkBottom: atlas.baseline + metrics.actualBoundingBoxDescent,
   };

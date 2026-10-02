@@ -20,8 +20,7 @@ export function observeNumberMotion(
 ): () => void {
   const document = element.ownerDocument;
   const window = document.defaultView;
-  if (!window)
-    throw new Error("Digitloom requires an element in a browser document.");
+  if (!window) throw new Error("No browser window.");
   let environment = environments.get(document);
 
   if (!environment) {

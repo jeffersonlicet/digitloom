@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { atlases } from "../src/core/glyphAtlas.js";
+import { atlases, glyph } from "../src/core/glyphAtlas.js";
 import { CanvasMotion } from "../src/core/controller.js";
 import { createBrowserEnvironment } from "./browserEnvironment.js";
 const settings = {
@@ -23,6 +23,9 @@ function mount(group?: HTMLElement) {
   const text = document.createElement("span");
   text.className = "rolling-number__text";
   text.textContent = settings.value;
+  const baseline = document.createElement("span");
+  baseline.setAttribute("aria-hidden", "true");
+  text.appendChild(baseline);
   host.appendChild(text);
   (group ?? document.body).appendChild(host);
   const controller = new CanvasMotion(host);
@@ -62,6 +65,422 @@ function nativeColumns() {
   );
 }
 describe("motion continuity", () => {
+  it("centers proportional canvas glyphs in tabular text columns", async () => {
+    const browser = createBrowserEnvironment();
+    vi.spyOn(
+      browser.context as unknown as CanvasRenderingContext2D,
+      "measureText",
+    ).mockImplementation(
+      (text: string) =>
+        ({
+          width: text === "1" ? 4 : 8,
+          actualBoundingBoxRight: text === "1" ? 4 : 8,
+          actualBoundingBoxAscent: 10,
+          actualBoundingBoxDescent: 2,
+          fontBoundingBoxAscent: 10,
+          fontBoundingBoxDescent: 2,
+        }) as TextMetrics,
+    );
+    const { controller, host } = mount();
+    vi.spyOn(Range.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Range) {
+        return {
+          left: this.startOffset * 8,
+          width: (this.endOffset - this.startOffset) * 8,
+        } as DOMRect;
+      },
+    );
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    const prepared = controller.prepare();
+    if (!prepared) throw new Error("The counter geometry was not prepared.");
+    expect(prepared.cells[0]?.width).toBe(8);
+    const one = glyph(prepared.atlas, "1");
+    expect(one.advance).toBe(4);
+    browser.context.drawImage.mockClear();
+    controller.draw();
+    const oneDraw = browser.context.drawImage.mock.calls.find(
+      ([canvas]) => canvas === one.canvas,
+    );
+    expect(oneDraw?.[1]).toBe(0);
+  });
+
+  it("uses the native baseline and reuses its font measurement", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        return {
+          left: 0,
+          top:
+            this.tagName === "SPAN" &&
+            this.getAttribute("aria-hidden") === "true"
+              ? 112.75
+              : 100,
+          width: 40,
+          height: 20,
+        } as DOMRect;
+      },
+    );
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    const prepared = current.controller.prepare();
+    expect(prepared?.atlas.baseline).toBe(12.75);
+    expect(current.text.childNodes).toHaveLength(2);
+    const create = vi.spyOn(document, "createElement");
+    expect(current.controller.prepare()?.atlas).toBe(prepared?.atlas);
+    expect(create).not.toHaveBeenCalled();
+  });
+  it("leaves an empty value as native text without measuring the marker as text", () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    current.text.childNodes[0].textContent = "";
+    browser.show(current.host);
+    current.controller.update({ ...settings, value: "" });
+    expect(current.controller.prepare()).toBeNull();
+    expect(current.text.textContent).toBe("");
+  });
+
+  it("settles motion when the number becomes non-renderable", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host, text } = mount();
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    text.childNodes[0].textContent = "13.00";
+    controller.update({ ...settings, value: "13.00" });
+    await Promise.resolve();
+    expect(host.dataset.rollingReady).toBeDefined();
+    vi.spyOn(text, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+    } as DOMRect);
+    controller.refresh();
+    await Promise.resolve();
+    expect(host.dataset.rollingReady).toBeUndefined();
+    expect(
+      browser.animations.every(
+        (animation) => animation.cancel.mock.calls.length,
+      ),
+    ).toBe(true);
+    browser.context.drawImage.mockClear();
+    controller.draw();
+    expect(browser.context.drawImage).not.toHaveBeenCalled();
+  });
+
+  it("clips canvas painting to overflow ancestors between the number and group", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    const row = document.createElement("div");
+    row.style.overflow = "hidden";
+    group.appendChild(row);
+    document.body.appendChild(group);
+    const { controller, host } = mount(row);
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    expect(controller.prepare()?.clip).not.toBeNull();
+    browser.context.rect.mockClear();
+    controller.draw();
+    expect(browser.context.clip).toHaveBeenCalled();
+    expect(browser.context.rect).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies child opacity to its shared-surface drawing", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    const row = document.createElement("div");
+    row.style.opacity = "0.5";
+    group.appendChild(row);
+    document.body.appendChild(group);
+    const { controller, host } = mount(row);
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    controller.draw();
+    expect(browser.context.globalAlpha).toBe(0.5);
+  });
+
+  it("clears an active roll for empty text and resumes from a later number", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    current.text.childNodes[0].textContent = "19.00";
+    current.controller.update({ ...settings, value: "19.00" });
+    await Promise.resolve();
+    expect(current.host.dataset.rollingReady).toBeDefined();
+    const running = browser.animations.filter(
+      (animation) => animation.cancel.mock.calls.length === 0,
+    );
+    current.text.childNodes[0].textContent = "";
+    current.controller.update({ ...settings, value: "" });
+    await Promise.resolve();
+    expect(current.host.dataset.rollingReady).toBeUndefined();
+    running.forEach((animation) =>
+      expect(animation.cancel).toHaveBeenCalledOnce(),
+    );
+    browser.context.drawImage.mockClear();
+    current.controller.draw();
+    expect(browser.context.drawImage).not.toHaveBeenCalled();
+    current.text.childNodes[0].textContent = "42.00";
+    current.controller.update({ ...settings, value: "42.00" });
+    await Promise.resolve();
+    expect(current.host.dataset.rollingReady).toBeDefined();
+    expect(browser.context.drawImage).toHaveBeenCalled();
+    expect(current.text.textContent).toBe("42.00");
+  });
+
+  it("rebuilds font metrics without inserting or removing live text nodes", () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    browser.show(current.host);
+    current.controller.update(settings);
+    const observer = new MutationObserver(() => {});
+    observer.observe(current.host, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+    for (const value of ["12.00", "τ0.0007706", "$1,234.56"]) {
+      current.text.childNodes[0].textContent = value;
+      current.controller.update({ ...settings, value });
+      observer.takeRecords();
+      atlases.clear();
+      const prepared = current.controller.prepare();
+      expect(prepared?.atlas.baseline).toBe(14);
+      expect(observer.takeRecords()).toEqual([]);
+    }
+    observer.disconnect();
+  });
+
+  it("keeps cached metrics and avoids refresh on empty font completions", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    const atlas = current.controller.prepare()?.atlas;
+    const create = vi.spyOn(document, "createElement");
+    const queue = vi.spyOn(window, "queueMicrotask");
+    for (let index = 0; index < 82; index += 1) browser.finishFonts();
+    expect(current.controller.prepare()?.atlas).toBe(atlas);
+    expect(create).not.toHaveBeenCalled();
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  it("refreshes shared counters when a font face finishes loading", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    document.body.appendChild(group);
+    const first = mount(group);
+    const second = mount(group);
+    for (const current of [first, second]) {
+      browser.show(current.host);
+      current.controller.update(settings);
+    }
+    await Promise.resolve();
+    const atlas = first.controller.prepare()?.atlas;
+    const prepareFirst = vi.spyOn(first.controller, "prepare");
+    const prepareSecond = vi.spyOn(second.controller, "prepare");
+    browser.finishFonts([{ family: "Arial", status: "loaded" } as FontFace]);
+    expect(atlases.size).toBe(0);
+    await Promise.resolve();
+    expect(prepareFirst).toHaveBeenCalledOnce();
+    expect(prepareSecond).toHaveBeenCalledOnce();
+    expect(first.controller.prepare()?.atlas).not.toBe(atlas);
+  });
+
+  it("ignores repeated loaded faces while retaining later font arrivals", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    const face = { family: "Arial", status: "loaded" } as FontFace;
+    browser.finishFonts([face, face]);
+    await Promise.resolve();
+    const atlas = current.controller.prepare()?.atlas;
+    const create = vi.spyOn(document, "createElement");
+    const queue = vi.spyOn(window, "queueMicrotask");
+    for (let index = 0; index < 50; index += 1)
+      browser.finishFonts(Array(140).fill(face));
+    expect(current.controller.prepare()?.atlas).toBe(atlas);
+    expect(create).not.toHaveBeenCalled();
+    expect(queue).not.toHaveBeenCalled();
+    browser.finishFonts([
+      face,
+      { family: "Inter", status: "loaded" } as FontFace,
+    ]);
+    await Promise.resolve();
+    expect(current.controller.prepare()?.atlas).not.toBe(atlas);
+    expect(queue).toHaveBeenCalledOnce();
+  });
+
+  it("removes the font listener when the last counter unmounts", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    const atlas = current.controller.prepare()?.atlas;
+    current.controller.destroy();
+    browser.finishFonts([{ family: "Arial", status: "loaded" } as FontFace]);
+    expect([...atlases.values()]).toContain(atlas);
+    expect(document.fonts.removeEventListener).toHaveBeenCalledWith(
+      "loadingdone",
+      expect.any(Function),
+    );
+  });
+
+  it("reuses baseline measurements across fractional position noise", async () => {
+    const browser = createBrowserEnvironment();
+    const current = mount();
+    let height = 22.000001907348633;
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        return {
+          left: 0,
+          top:
+            this.tagName === "SPAN" &&
+            this.getAttribute("aria-hidden") === "true"
+              ? 116
+              : 100,
+          width: 40,
+          height,
+        } as DOMRect;
+      },
+    );
+    browser.show(current.host);
+    current.controller.update(settings);
+    await Promise.resolve();
+    const initial = current.controller.prepare();
+    const create = vi.spyOn(document, "createElement");
+    for (const next of [
+      22.000001907348633, 21.999998092651367, 21.999996185302734,
+      22.000003814697266, 21.99999237060547, 22.00000762939453,
+    ]) {
+      height = next;
+      expect(current.controller.prepare()?.atlas).toBe(initial?.atlas);
+    }
+    expect(create).not.toHaveBeenCalled();
+    expect(initial?.atlas.lineHeight).toBe(22.000001907348633);
+    height = 23.125;
+    const changed = current.controller.prepare();
+    expect(changed?.atlas).not.toBe(initial?.atlas);
+    expect(changed?.atlas.lineHeight).toBe(23.125);
+    expect(create).not.toHaveBeenCalled();
+    expect(current.text.childNodes).toHaveLength(2);
+  });
+
+  it("shares text baselines without sharing host padding offsets", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    document.body.appendChild(group);
+    const first = mount(group);
+    const second = mount(group);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        const textTop =
+          this === first.text ? 10 : this === second.text ? 20 : 0;
+        const probeTop = this.parentElement === first.text ? 23 : 33;
+        return {
+          left: 0,
+          top:
+            this.tagName === "SPAN" &&
+            this.getAttribute("aria-hidden") === "true"
+              ? probeTop
+              : textTop,
+          width: 40,
+          height: this === first.host || this === second.host ? 40 : 20,
+        } as DOMRect;
+      },
+    );
+    browser.show(first.host);
+    browser.show(second.host);
+    first.controller.update(settings);
+    second.controller.update(settings);
+    await Promise.resolve();
+    const a = first.controller.prepare();
+    const b = second.controller.prepare();
+    expect(a?.atlas).toBe(b?.atlas);
+    expect(a?.atlas.baseline).toBe(13);
+    expect([a?.y, b?.y]).toEqual([10, 20]);
+    expect(first.text.childNodes).toHaveLength(2);
+    expect(second.text.childNodes).toHaveLength(2);
+  });
+  it.each([1, 1.25, 1.5, 2, 3])(
+    "preserves native origins and restores text before the clock ends at pixel ratio %s",
+    async (ratio) => {
+      const browser = createBrowserEnvironment();
+      const current = mount();
+      browser.show(current.host);
+      current.controller.update(settings);
+      await Promise.resolve();
+      const prepared = current.controller.prepare();
+      if (!prepared) throw new Error("Counter geometry is unavailable.");
+      const characters = prepared.cells.map((cell, index) => ({
+        ...cell,
+        x: index * 8.13,
+      }));
+      current.controller.start(
+        {
+          ...prepared,
+          cells: characters,
+          x: 0.31,
+          y: 0.15,
+          atlas: { ...prepared.atlas, ratio, lineHeight: 20.3 },
+        },
+        new Map(),
+      );
+      current.controller.surface.leftBleed = 0.23;
+      browser.animations.forEach((animation) => setProgress(animation, 0.5));
+      browser.context.drawImage.mockClear();
+      current.controller.draw();
+      const transform = browser.context.setTransform.mock.calls.slice(-1)[0];
+      if (!transform) throw new Error("The canvas transform is unavailable.");
+      expect(transform[5]).toBeCloseTo(0.15 * ratio, 8);
+      const draws = browser.context.drawImage.mock.calls;
+      expect(draws.length).toBeGreaterThan(0);
+      draws.forEach(([, x]) => {
+        expect(
+          characters.some(
+            (cell) => Math.abs(Number(x) - (0.31 + cell.x - 2)) < 1e-8,
+          ),
+        ).toBe(true);
+      });
+      browser.animations.forEach((animation) =>
+        setProgress(animation, 0.99999),
+      );
+      browser.context.drawImage.mockClear();
+      current.controller.draw();
+      expect(current.host.dataset.rollingReady).toBeUndefined();
+      expect(browser.context.drawImage).not.toHaveBeenCalled();
+      expect(
+        browser.animations.every(
+          (animation) => animation.playState !== "finished",
+        ),
+      ).toBe(true);
+      browser.animations.forEach((animation) => setProgress(animation, 0.9));
+      current.controller.draw();
+      expect(current.host.dataset.rollingReady).toBe("");
+      expect(browser.context.drawImage).toHaveBeenCalled();
+      browser.animations.forEach((animation) => {
+        animation.playState = "finished";
+      });
+      current.controller.draw();
+      expect(current.host.dataset.rollingReady).toBeUndefined();
+    },
+  );
   it("restores native text and clears settled glyphs after natural completion", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host } = mount();
@@ -107,7 +526,7 @@ describe("motion continuity", () => {
         ?.cancel,
     ).not.toHaveBeenCalled();
   });
-  it("updates fractional CSS dimensions without reallocating the backing store", async () => {
+  it("keeps fractional surfaces aligned with their backing pixels", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host } = mount();
     browser.show(host);
@@ -139,9 +558,41 @@ describe("motion continuity", () => {
       clocks,
     );
     expect([canvas.width, canvas.height]).toEqual(dimensions);
-    expect(canvas.style.width).toBe("100.6px");
-    expect(canvas.style.height).toBe("20.6px");
+    expect(canvas.style.width).toBe("101px");
+    expect(canvas.style.height).toBe("21px");
   });
+  it.each([1, 1.25, 1.5, 2, 3])(
+    "preserves native bitmap scale at pixel ratio %s",
+    async (ratio) => {
+      const browser = createBrowserEnvironment();
+      const current = mount();
+      browser.show(current.host);
+      current.controller.update(settings);
+      await Promise.resolve();
+      const prepared = current.controller.prepare();
+      if (!prepared) throw new Error("The counter geometry was not prepared.");
+      current.controller.start(
+        {
+          ...prepared,
+          gridWidth: 100.21,
+          gridHeight: 20.61,
+          leftLimit: 0,
+          rightLimit: 0,
+          atlas: { ...prepared.atlas, ratio },
+        },
+        new Map(),
+      );
+      const canvas = current.controller.surface.canvas;
+      expect(parseFloat(canvas.style.width) * ratio).toBeCloseTo(
+        canvas.width,
+        8,
+      );
+      expect(parseFloat(canvas.style.height) * ratio).toBeCloseTo(
+        canvas.height,
+        8,
+      );
+    },
+  );
   it("updates CSS dimensions when a pixel-ratio change retains backing dimensions", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host } = mount();
@@ -179,13 +630,44 @@ describe("motion continuity", () => {
     expect(canvas.style.width).toBe("100px");
     expect(canvas.style.height).toBe("40px");
   });
+  it("rounds reel travel while retaining the native row origin", async () => {
+    const browser = createBrowserEnvironment();
+    const { controller, host } = mount();
+    browser.show(host);
+    controller.update(settings);
+    await Promise.resolve();
+    const prepared = controller.prepare();
+    if (!prepared) throw new Error("The counter geometry was not prepared.");
+    controller.start(
+      {
+        ...prepared,
+        y: 0.15,
+        atlas: { ...prepared.atlas, lineHeight: 20.3, ratio: 2 },
+      },
+      new Map(),
+    );
+    browser.context.drawImage.mockClear();
+    browser.context.setTransform.mockClear();
+    controller.draw();
+    expect(browser.context.drawImage.mock.calls.length).toBeGreaterThan(0);
+    expect(
+      browser.context.drawImage.mock.calls.every(([, , y]) =>
+        Number.isInteger(Number(y) * 2),
+      ),
+    ).toBe(true);
+    expect(
+      browser.context.setTransform.mock.calls.every(
+        ([, , , , , y]) => y === 0.3,
+      ),
+    ).toBe(true);
+  });
   it("keeps red glyphs fully opaque and rejects subpixel edge slivers", async () => {
     const browser = createBrowserEnvironment();
     const { controller, host, text } = mount();
     host.style.color = "rgb(255, 50, 50)";
     controller.update(settings);
     browser.show(host);
-    text.textContent = "13.00";
+    text.childNodes[0].textContent = "13.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     const alpha: number[] = [];
@@ -212,12 +694,12 @@ describe("motion continuity", () => {
     const { controller, host, text } = mount();
     controller.update(settings);
     browser.show(host);
-    text.textContent = "19.00";
+    text.childNodes[0].textContent = "19.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     setProgress(browser.animations[0], 0.5);
     const before = digitPositions(browser, controller, 6);
-    text.textContent = "29.00";
+    text.childNodes[0].textContent = "29.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     setProgress(browser.animations[1], 0);
@@ -238,12 +720,12 @@ describe("motion continuity", () => {
     const { controller, host, text } = mount();
     controller.update(settings);
     browser.show(host);
-    text.textContent = "19.00";
+    text.childNodes[0].textContent = "19.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     setProgress(browser.animations[0], 0.5);
     const before = digitPositions(browser, controller, 6);
-    text.textContent = "17.00";
+    text.childNodes[0].textContent = "17.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     setProgress(browser.animations[1], 0);
@@ -269,7 +751,7 @@ describe("motion continuity", () => {
     Object.defineProperty(host, "getBoundingClientRect", {
       value: () => ({ left, top: 0, width, height: 20 }) as DOMRect,
     });
-    text.textContent = "$12345.00";
+    text.childNodes[0].textContent = "$12345.00";
     controller.update({ ...settings, value: text.textContent });
     browser.show(host);
     controller.update({ ...settings, value: text.textContent });
@@ -278,7 +760,7 @@ describe("motion continuity", () => {
     controller.draw();
     left = 20;
     width = 40;
-    text.textContent = "τ5.00";
+    text.childNodes[0].textContent = "τ5.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     setProgress(browser.animations[1], 0);
@@ -305,7 +787,7 @@ describe("motion continuity", () => {
     controller.update(settings);
     await Promise.resolve();
     left = 1000000;
-    text.textContent = "13.00";
+    text.childNodes[0].textContent = "13.00";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     expect(controller.surface.canvas.width).toBeLessThanOrEqual(
@@ -334,7 +816,7 @@ describe("motion continuity", () => {
       browser.animations.slice(0, -2).forEach((animation) => {
         animation.playState = "finished";
       });
-      text.textContent = `${100 + index}.00`;
+      text.childNodes[0].textContent = `${100 + index}.00`;
       controller.update({ ...settings, value: text.textContent });
       await Promise.resolve();
       expect(
@@ -360,7 +842,7 @@ describe("motion continuity", () => {
     for (const counter of [first, second]) {
       counter.controller.update(settings);
       browser.show(counter.host);
-      counter.text.textContent = "19.00";
+      counter.text.childNodes[0].textContent = "19.00";
       counter.controller.update({
         ...settings,
         value: counter.text.textContent,
@@ -368,7 +850,7 @@ describe("motion continuity", () => {
     }
     await Promise.resolve();
     expect(browser.animations).toHaveLength(1);
-    first.text.textContent = "29.00";
+    first.text.childNodes[0].textContent = "29.00";
     first.controller.update({ ...settings, value: first.text.textContent });
     await Promise.resolve();
     browser.animations[0].playState = "finished";
@@ -392,14 +874,14 @@ describe("motion continuity", () => {
     Object.defineProperty(host, "getBoundingClientRect", {
       value: () => ({ left, top: 0, width: 40, height: 20 }) as DOMRect,
     });
-    text.textContent = "$12.00";
+    text.childNodes[0].textContent = "$12.00";
     controller.update({ ...settings, value: text.textContent });
     browser.show(host);
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     browser.animations[0].playState = "finished";
     controller.draw();
-    text.textContent = "τ2.00";
+    text.childNodes[0].textContent = "τ2.00";
     left = 104;
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
@@ -408,7 +890,8 @@ describe("motion continuity", () => {
     setProgress(browser.animations[1], 0.5);
     expect(digitPositions(browser, controller, 112)).toHaveLength(1);
     setProgress(browser.animations[1], 1);
-    expect(digitPositions(browser, controller, 110)).toHaveLength(1);
+    expect(digitPositions(browser, controller, 110)).toHaveLength(0);
+    expect(host.dataset.rollingReady).toBeUndefined();
   });
 });
 describe("canvas lifecycle", () => {
@@ -427,25 +910,23 @@ describe("canvas lifecycle", () => {
       });
     const { controller, host, text } = mount();
     host.style.fontVariantNumeric = "tabular-nums";
-    text.textContent = "(32.91%)";
+    text.childNodes[0].textContent = "(32.91%)";
     controller.update({ ...settings, value: text.textContent });
     browser.show(host);
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     const first = controller.prepare();
-    expect(first?.characters.find((cell) => cell.key === "suffix")?.x).toBe(44);
+    expect(first?.cells.find((cell) => cell.place === "suffix")?.x).toBe(44);
     const cachedReads = bounds.mock.calls.length;
     controller.prepare();
     expect(bounds).toHaveBeenCalledTimes(cachedReads + 1);
-    text.textContent = "(28.06%)";
+    text.childNodes[0].textContent = "(28.06%)";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     const second = controller.prepare();
-    expect(second?.characters.find((cell) => cell.key === "suffix")?.x).toBe(
-      48,
-    );
+    expect(second?.cells.find((cell) => cell.place === "suffix")?.x).toBe(48);
     const updatedReads = bounds.mock.calls.length;
-    text.textContent = "(28.60%)";
+    text.childNodes[0].textContent = "(28.60%)";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     controller.prepare();
@@ -473,11 +954,11 @@ describe("canvas lifecycle", () => {
       const { controller, host, text } = mount();
       host.style.direction = direction;
       host.style.paddingLeft = "8px";
-      text.textContent = "$12.34";
+      text.childNodes[0].textContent = "$12.34";
       controller.update({ ...settings, value: text.textContent });
       browser.show(host);
       const prepared = controller.prepare();
-      expect(prepared?.characters.map((cell) => cell.x)).toEqual(
+      expect(prepared?.cells.map((cell) => cell.x)).toEqual(
         direction === "rtl" ? [40, 8, 16, 24, 32, 0] : [8, 16, 24, 32, 40, 48],
       );
     },
@@ -490,11 +971,13 @@ describe("canvas lifecycle", () => {
     const row = document.createElement("div");
     group.appendChild(row);
     document.body.appendChild(group);
-    const { controller, host } = mount(row);
+    const { controller, host, text } = mount(row);
     let top = 40;
-    Object.defineProperty(host, "getBoundingClientRect", {
-      value: () => ({ left: 0, top, width: 40, height: 20 }) as DOMRect,
-    });
+    for (const element of [host, text]) {
+      Object.defineProperty(element, "getBoundingClientRect", {
+        value: () => ({ left: 0, top, width: 40, height: 20 }) as DOMRect,
+      });
+    }
     browser.show(host);
     controller.update(settings);
     await Promise.resolve();
@@ -527,7 +1010,7 @@ describe("canvas lifecycle", () => {
       browser.show(host);
       controller.update(settings);
       await Promise.resolve();
-      text.textContent = "13.00";
+      text.childNodes[0].textContent = "13.00";
       if (order === "before") controller.refresh();
       controller.update({ ...settings, value: text.textContent });
       if (order === "after") controller.refresh();
@@ -539,7 +1022,7 @@ describe("canvas lifecycle", () => {
     },
   );
 
-  it("does not measure layout for opacity-only fades or canvas style writes", async () => {
+  it("refreshes opacity changes and ignores canvas style writes", async () => {
     const browser = createBrowserEnvironment();
     const group = document.createElement("div");
     group.dataset.digitloomGroup = "";
@@ -557,7 +1040,36 @@ describe("canvas lifecycle", () => {
     if (!canvas) throw new Error("The shared canvas was not mounted.");
     canvas.style.left = "8px";
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(prepare).not.toHaveBeenCalled();
+    expect(prepare).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes active flex siblings when a number changes its width", async () => {
+    const browser = createBrowserEnvironment();
+    const group = document.createElement("div");
+    group.dataset.digitloomGroup = "";
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    group.appendChild(row);
+    document.body.appendChild(group);
+    const first = mount(row);
+    const second = mount(row);
+    for (const current of [first, second]) {
+      browser.show(current.host);
+      current.controller.update(settings);
+    }
+    await Promise.resolve();
+    const prepareSecond = vi.spyOn(second.controller, "prepare");
+    first.text.childNodes[0].textContent = "13.00";
+    vi.spyOn(first.text, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 50,
+      height: 20,
+    } as DOMRect);
+    first.controller.update({ ...settings, value: "13.00" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(prepareSecond).toHaveBeenCalled();
   });
 
   it("rolls new zero columns and keeps unchanged zero columns still", async () => {
@@ -573,7 +1085,7 @@ describe("canvas lifecycle", () => {
     const { controller, host, text } = mount();
     controller.update(settings);
     browser.show(host);
-    text.textContent = "12.0000";
+    text.childNodes[0].textContent = "12.0000";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     vi.spyOn(browser.animations[0].effect, "getComputedTiming").mockReturnValue(
@@ -602,13 +1114,13 @@ describe("canvas lifecycle", () => {
       },
     );
     const { controller, host, text } = mount();
-    text.textContent = "+τ0.22";
+    text.childNodes[0].textContent = "+τ0.22";
     controller.update({ ...settings, value: text.textContent });
     browser.show(host);
     await Promise.resolve();
     expect(browser.animations).toHaveLength(0);
     expect(host.dataset.rollingReady).toBeUndefined();
-    text.textContent = "+τ0.0007706";
+    text.childNodes[0].textContent = "+τ0.0007706";
     controller.update({ ...settings, value: text.textContent });
     await Promise.resolve();
     const animation = browser.animations[0];
@@ -666,7 +1178,7 @@ describe("canvas lifecycle", () => {
     browser.show(amount.host);
     browser.show(percent.host);
     amount.controller.update(settings);
-    percent.text.textContent = "(0.00%)";
+    percent.text.childNodes[0].textContent = "(0.00%)";
     percent.controller.update({ ...settings, value: "(0.00%)", duration: 200 });
     await Promise.resolve();
     browser.animations.forEach((animation) => {
@@ -676,7 +1188,7 @@ describe("canvas lifecycle", () => {
     frame?.(200);
     browser.context.clearRect.mockClear();
     browser.context.drawImage.mockClear();
-    amount.text.textContent = "13.00";
+    amount.text.childNodes[0].textContent = "13.00";
     amount.controller.update({ ...settings, value: "13.00" });
     await Promise.resolve();
     expect(browser.context.clearRect).toHaveBeenCalledOnce();

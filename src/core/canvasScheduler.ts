@@ -9,12 +9,13 @@ let queued = false;
 
 function repaint(surfaces: Set<Surface>) {
   const progress = new Map<Clock, number>();
+  const opacity = new Map<HTMLElement, number>();
   surfaces.forEach((surface) => {
     if (!surface.motions.size) return;
     const { context, canvas } = surface;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
-    surface.motions.forEach((motion) => motion.draw(progress));
+    surface.motions.forEach((motion) => motion.draw(progress, opacity));
   });
 }
 function tick() {
@@ -29,11 +30,20 @@ function queuePaint() {
     queued = false;
     const batch = [...pending];
     pending.clear();
+    const updating = new Set(batch);
     const prepared = batch.map((item) => item.prepare());
     const clocks = new Map<string, Clock>();
     batch.forEach((item, index) => {
       item.start(prepared[index], clocks);
       dirty.add(item.surface);
+    });
+    new Set(batch.map((item) => item.surface)).forEach((surface) => {
+      if (!surface.layoutChanges.size) return;
+      surface.motions.forEach((motion) => {
+        if (!updating.has(motion))
+          motion.refreshForLayout(surface.layoutChanges);
+      });
+      surface.layoutChanges.clear();
     });
     const surfaces = new Set(dirty);
     dirty.clear();

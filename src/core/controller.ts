@@ -18,14 +18,22 @@ import {
   invalidateSurface,
   stopIdleFrame,
 } from "./canvasScheduler.js";
-import type { Settings, Cell, Atlas, Surface, Clock } from "./canvas.types.js";
+import type {
+  Settings,
+  Cell,
+  Atlas,
+  Surface,
+  Clock,
+  Clip,
+} from "./canvas.types.js";
 export class CanvasMotion {
   private destroyed = false;
   private settings: Settings | null = null;
   private immediate = false;
   private previous = "";
   private allowed = false;
-  private cells: Cell[] = [];
+  private visibilityObserved = false;
+  private cells: (Cell & { offsetX: number; offsetY: number })[] = [];
   private atlas: Atlas | null = null;
   private clock: Clock | null = null;
   private clocks = new Set<Clock>();
@@ -34,6 +42,10 @@ export class CanvasMotion {
   private origin = 0;
   private paintWidth = 0;
   private y = 0;
+  private clip: Clip | null = null;
+  private opacityLayers: HTMLElement[] = [];
+  private flexParent: HTMLElement | null = null;
+  private textWidth = 0;
   readonly surface: Surface;
   private grid: HTMLElement;
   private readonly stop: () => void;
@@ -42,18 +54,49 @@ export class CanvasMotion {
     this.surface = getSurface(this.grid);
     this.surface.motions.add(this);
     this.stop = observeNumberMotion(host, (allowed) => {
-      if (allowed === this.allowed) return;
+      const firstObservation = !this.visibilityObserved;
+      this.visibilityObserved = true;
+      if (allowed === this.allowed) {
+        if (
+          firstObservation &&
+          allowed &&
+          this.settings?.animated &&
+          this.settings.duration > 0 &&
+          this.previous !== this.settings.value
+        )
+          schedule(this);
+        return;
+      }
       this.allowed = allowed;
-      if (!allowed) this.settle();
+      if (!allowed) {
+        this.settle();
+        this.previous = this.settings?.value ?? "";
+        return;
+      }
+      if (firstObservation) {
+        if (
+          this.settings?.animated &&
+          this.settings.duration > 0 &&
+          this.previous !== this.settings.value
+        )
+          schedule(this);
+        return;
+      }
       this.previous = this.settings?.value ?? "";
     });
   }
   update(settings: Settings) {
     this.settings = settings;
     this.immediate = false;
-    if (!this.allowed || !settings.animated || !settings.duration) {
+    if (!settings.value || !settings.animated || !settings.duration) {
       this.settle();
       this.previous = settings.value;
+      return;
+    }
+    if (!this.allowed) {
+      this.settle();
+      if (this.visibilityObserved || !this.previous)
+        this.previous = settings.value;
       return;
     }
     schedule(this);
@@ -66,26 +109,34 @@ export class CanvasMotion {
   }
   prepare() {
     if (!this.settings || !this.allowed) return null;
+    const element = this.host.firstElementChild;
+    const baseline = element?.lastElementChild;
+    if (!element?.firstChild?.nodeValue || !baseline) return null;
+    const text = element.firstChild;
     const style = getComputedStyle(this.host);
-    const bounds = this.host.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    if (
+      !Number.isFinite(bounds.width) ||
+      !Number.isFinite(bounds.height) ||
+      bounds.width <= 0 ||
+      bounds.height <= 0
+    )
+      return null;
     const document = this.host.ownerDocument;
     const view = document.defaultView;
     if (!view) return null;
     const ratio = view.devicePixelRatio * (view.visualViewport?.scale ?? 1);
     const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const spacing = Number.parseFloat(style.letterSpacing) || 0;
-    const key = `${font}|${style.color}|${bounds.height}|${ratio}|${spacing}|${style.fontVariantNumeric}`;
+    const spacing = parseFloat(style.letterSpacing) || 0;
+    const baselineOffset = baseline.getBoundingClientRect().top - bounds.top;
+    // Fractional translations perturb DOMRect height without changing the font.
+    const key = `${font}|${style.color}|${Math.round(bounds.height * 1000)}|${Math.round(baselineOffset * 1000)}|${ratio}|${spacing}|${style.fontVariantNumeric}`;
     let atlas = atlases.get(key);
     if (!atlas) {
-      const probe = document.createElement("canvas").getContext("2d");
-      if (!probe) throw new Error("Canvas 2D is unavailable.");
-      probe.font = font;
-      const metrics = probe.measureText("0123456789");
-      const ascent = metrics.fontBoundingBoxAscent;
-      const descent = metrics.fontBoundingBoxDescent;
+      // Read the fixed marker without changing the live text layout.
       atlas = {
         owner: document,
-        baseline: (bounds.height - ascent - descent) / 2 + ascent,
+        baseline: baselineOffset,
         spacing,
         advances: new Map(),
         glyphs: new Map(),
@@ -101,6 +152,66 @@ export class CanvasMotion {
     const gridStyle = getComputedStyle(this.grid);
     const borderLeft = parseFloat(gridStyle.borderLeftWidth) || 0;
     const borderTop = parseFloat(gridStyle.borderTopWidth) || 0;
+    let clip: Clip | null = null;
+    const opacityLayers: HTMLElement[] = [];
+    let flexParent: HTMLElement | null = null;
+    for (
+      let ancestor: HTMLElement | null = this.host;
+      ancestor && ancestor !== this.grid;
+      ancestor = ancestor.parentElement
+    ) {
+      const ancestorStyle = getComputedStyle(ancestor);
+      if (
+        !flexParent &&
+        (ancestorStyle.display === "flex" ||
+          ancestorStyle.display === "inline-flex")
+      )
+        flexParent = ancestor;
+      const overflowX = ancestorStyle.overflowX || ancestorStyle.overflow;
+      const overflowY = ancestorStyle.overflowY || ancestorStyle.overflow;
+      const clipsX = Boolean(overflowX) && overflowX !== "visible";
+      const clipsY = Boolean(overflowY) && overflowY !== "visible";
+      if (clipsX || clipsY) {
+        const rect = ancestor.getBoundingClientRect();
+        const scaleX = ancestor.offsetWidth
+          ? rect.width / ancestor.offsetWidth
+          : 1;
+        const scaleY = ancestor.offsetHeight
+          ? rect.height / ancestor.offsetHeight
+          : 1;
+        const left =
+          rect.left +
+          ancestor.clientLeft * scaleX -
+          gridBounds.left -
+          borderLeft;
+        const top =
+          rect.top + ancestor.clientTop * scaleY - gridBounds.top - borderTop;
+        const right = left + ancestor.clientWidth * scaleX;
+        const bottom = top + ancestor.clientHeight * scaleY;
+        clip ??= [-Infinity, -Infinity, Infinity, Infinity];
+        if (clipsX) {
+          clip[0] = Math.max(clip[0], left);
+          clip[2] = Math.min(clip[2], right);
+        }
+        if (clipsY) {
+          clip[1] = Math.max(clip[1], top);
+          clip[3] = Math.min(clip[3], bottom);
+        }
+      }
+      const alpha = Number.parseFloat(ancestorStyle.opacity);
+      const animatesOpacity =
+        typeof ancestor.getAnimations === "function" &&
+        ancestor
+          .getAnimations()
+          .some(
+            (animation) =>
+              animation.effect instanceof KeyframeEffect &&
+              animation.effect
+                .getKeyframes()
+                .some((frame) => "opacity" in frame),
+          );
+      if (animatesOpacity || alpha !== 1) opacityLayers.push(ancestor);
+    }
     const viewport = view.visualViewport;
     const viewportLeft = viewport?.offsetLeft ?? 0;
     const viewportWidth = viewport?.width ?? view.innerWidth;
@@ -118,13 +229,17 @@ export class CanvasMotion {
         height: viewport?.height ?? view.innerHeight,
       },
     );
+    if (clip) {
+      clip[0] -= crop.left;
+      clip[1] -= crop.top;
+      clip[2] -= crop.left;
+      clip[3] -= crop.top;
+    }
     const leftLimit = Math.min(
       viewportWidth,
       Math.max(0, gridBounds.left + borderLeft + crop.left - viewportLeft),
     );
     const characters = planNumberCharacters(this.settings.value);
-    const text = this.host.firstElementChild?.firstChild;
-    if (!text) return null;
     const range = document.createRange();
     range.setStart(text, 0);
     range.setEnd(text, characters[0].text.length);
@@ -143,12 +258,12 @@ export class CanvasMotion {
         atlas.advances.set(character.text, width);
       }
       offset += character.text.length;
-      const cell = { ...character, x };
+      const cell = { ...character, x, width: width ?? 0 };
       x += width;
       return cell;
     });
     return {
-      characters: positioned,
+      cells: positioned,
       left: this.grid.scrollLeft + crop.left,
       top: this.grid.scrollTop + crop.top,
       atlas,
@@ -160,11 +275,14 @@ export class CanvasMotion {
       leftLimit,
       rightLimit: Math.max(0, viewportWidth - crop.width - leftLimit),
       gridHeight: crop.height,
+      clip,
+      opacityLayers,
+      flexParent,
     };
   }
   start(
     prepared: {
-      characters: (Cell & { digit?: number })[];
+      cells: (Cell & { digit?: number })[];
       left: number;
       top: number;
       atlas: Atlas;
@@ -176,14 +294,29 @@ export class CanvasMotion {
       leftLimit: number;
       rightLimit: number;
       gridHeight: number;
+      clip: Clip | null;
+      opacityLayers: HTMLElement[];
+      flexParent: HTMLElement | null;
     } | null,
     clocks: Map<string, Clock>,
   ) {
     const settings = this.settings;
-    if (!prepared || !settings) return;
+    if (!prepared || !settings) {
+      if (!prepared) {
+        this.settle();
+        this.previous = settings?.value ?? this.previous;
+      }
+      return;
+    }
     const progress = motionProgress(this.clock);
     const layoutOnly = this.previous === settings.value && this.clock;
-    const oldCells = new Map(this.cells.map((cell) => [cell.key, cell]));
+    const oldCells = new Map(this.cells.map((cell) => [cell.place, cell]));
+    if (
+      this.textWidth &&
+      this.textWidth !== prepared.width &&
+      prepared.flexParent
+    )
+      this.surface.layoutChanges.add(prepared.flexParent);
     const duration = this.immediate ? 0 : settings.duration;
     const timeline = this.host.ownerDocument.timeline;
     const clock =
@@ -192,33 +325,38 @@ export class CanvasMotion {
     let staggered = false;
     const trend = compareNumberValues(this.previous, settings.value);
     const previous = new Map(
-      planNumberCharacters(this.previous).map((cell) => [cell.key, cell.digit]),
+      planNumberCharacters(this.previous).map((cell) => [
+        cell.place,
+        cell.digit,
+      ]),
     );
-    this.cells = prepared.characters.map((cell) => {
-      const oldCell = oldCells.get(cell.key);
+    this.cells = prepared.cells.map((cell) => {
+      const oldCell = oldCells.get(cell.place);
       if (layoutOnly && oldCell) {
         return {
           ...oldCell,
           x: cell.x,
+          width: cell.width,
         };
       }
       const positioned = {
         ...cell,
+        offsetY: 0,
         offsetX: oldCell
           ? this.origin -
             prepared.origin +
             oldCell.x -
             cell.x +
-            (oldCell.offsetX ?? 0) * (1 - progress)
+            oldCell.offsetX * (1 - progress)
           : 0,
       };
       if (cell.digit === undefined) {
         previousDelta = 0;
         return positioned;
       }
-      const from = centerReel(oldCell?.to ?? previous.get(cell.key) ?? 0);
+      const from = centerReel(oldCell?.to ?? previous.get(cell.place) ?? 0);
       let to = targetReelIndex(from, cell.digit, trend);
-      if (!previous.has(cell.key) && cell.digit === 0)
+      if (!previous.has(cell.place) && cell.digit === 0)
         to += trend < 0 ? -10 : 10;
       const rolls = (oldCell?.rolls ?? []).filter(
         (roll) => roll.clock.animation.playState !== "finished",
@@ -249,7 +387,11 @@ export class CanvasMotion {
     this.x = prepared.x;
     this.origin = prepared.origin;
     this.y = prepared.y;
-    const offsets = this.cells.map((cell) => cell.offsetX ?? 0);
+    this.clip = prepared.clip;
+    this.opacityLayers = prepared.opacityLayers;
+    this.flexParent = prepared.flexParent;
+    this.textWidth = prepared.width;
+    const offsets = this.cells.map((cell) => cell.offsetX);
     this.paintLeft = Math.min(0, ...offsets);
     this.paintWidth =
       prepared.width +
@@ -269,49 +411,80 @@ export class CanvasMotion {
         this.x + this.paintLeft + this.paintWidth - prepared.gridWidth,
       ),
     );
-    const left = prepared.left - this.surface.leftBleed;
-    setCanvasPixels(this.surface, "left", left);
+    setCanvasPixels(
+      this.surface,
+      "left",
+      prepared.left - this.surface.leftBleed,
+    );
     setCanvasPixels(this.surface, "top", prepared.top);
-    const surfaceWidth =
-      prepared.gridWidth + this.surface.bleed + this.surface.leftBleed;
-    const width = Math.ceil(surfaceWidth * ratio);
+    const width = Math.ceil(
+      (prepared.gridWidth + this.surface.bleed + this.surface.leftBleed) *
+        ratio,
+    );
     const height = Math.ceil(prepared.gridHeight * ratio);
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
     }
-    // CSS geometry can change while rounded backing dimensions stay equal.
-    setCanvasPixels(this.surface, "width", surfaceWidth);
-    setCanvasPixels(this.surface, "height", prepared.gridHeight);
+    // Keep one bitmap pixel per device pixel without changing text layout.
+    setCanvasPixels(this.surface, "width", width / ratio);
+    setCanvasPixels(this.surface, "height", height / ratio);
     this.immediate = false;
     if (layoutOnly) return;
-    this.host.dataset.rollingReady = "";
     active.add(this);
   }
+  refreshForLayout(changed: Set<HTMLElement>) {
+    if (active.has(this) && this.flexParent && changed.has(this.flexParent))
+      this.refresh();
+  }
   /** Draws this counter without clearing neighboring pixels on the shared surface. */
-  draw(progressCache = new Map<Clock, number>()) {
+  draw(
+    progressCache?: Map<Clock, number>,
+    opacityCache = new Map<HTMLElement, number>(),
+  ) {
     const atlas = this.atlas;
     const context = this.surface.context;
     if (!atlas || !this.clock) return;
-    // Keep layout history for the next update, but restore native text at rest.
-    if (
-      ![...this.clocks].some(
-        (clock) => clock.animation.playState !== "finished",
+    const progress = motionProgress(this.clock, progressCache);
+    const ratio = atlas.ratio;
+    let moving = 0;
+    for (const cell of this.cells) {
+      cell.offsetY = 0;
+      for (const roll of cell.rolls ?? [])
+        cell.offsetY +=
+          roll.delta * (1 - motionProgress(roll.clock, progressCache));
+      moving ||=
+        Math.round(cell.offsetX * (1 - progress) * ratio) ||
+        Math.round(cell.offsetY * atlas.lineHeight * ratio);
+    }
+    if (!moving) {
+      delete this.host.dataset.rollingReady;
+      if (
+        [...this.clocks].every(
+          (clock) => clock.animation.playState === "finished",
+        )
       )
-    ) {
-      this.settle(true);
+        this.settle(true);
       return;
     }
-    const progress = motionProgress(this.clock, progressCache);
+    this.host.dataset.rollingReady ??= "";
     context.save();
-    context.imageSmoothingQuality = "high";
+    context.globalAlpha = this.opacityLayers.reduce((alpha, element) => {
+      let layerOpacity = opacityCache.get(element);
+      if (layerOpacity === undefined) {
+        layerOpacity = Number.parseFloat(getComputedStyle(element).opacity);
+        if (!Number.isFinite(layerOpacity)) layerOpacity = 1;
+        opacityCache.set(element, layerOpacity);
+      }
+      return alpha * layerOpacity;
+    }, 1);
     context.setTransform(
-      atlas.ratio,
+      ratio,
       0,
       0,
-      atlas.ratio,
-      this.surface.leftBleed * atlas.ratio,
-      this.y * atlas.ratio,
+      ratio,
+      this.surface.leftBleed * ratio,
+      this.y * ratio,
     );
 
     context.beginPath();
@@ -322,61 +495,71 @@ export class CanvasMotion {
       atlas.lineHeight,
     );
     context.clip();
-    this.cells.forEach((cell) => {
+    if (this.clip) {
+      const [left, top, right, bottom] = this.clip;
+      context.beginPath();
+      context.rect(
+        Number.isFinite(left) ? left : -1e6,
+        Number.isFinite(top) ? top - this.y : -1e6,
+        Number.isFinite(left) && Number.isFinite(right)
+          ? Math.max(0, right - left)
+          : 2e6,
+        Number.isFinite(top) && Number.isFinite(bottom)
+          ? Math.max(0, bottom - top)
+          : 2e6,
+      );
+      context.clip();
+    }
+    for (const cell of this.cells) {
       const x =
-        Math.round(
-          (this.x + cell.x + (cell.offsetX ?? 0) * (1 - progress)) *
-            atlas.ratio,
-        ) / atlas.ratio;
+        this.x +
+        cell.x +
+        Math.round(cell.offsetX * (1 - progress) * ratio) / ratio -
+        2;
       if (cell.to === undefined) {
         const current = glyph(atlas, cell.text);
         context.drawImage(
           current.canvas,
-          x - 2,
+          x,
           0,
-          current.canvas.width / atlas.ratio,
-          current.canvas.height / atlas.ratio,
+          current.canvas.width / ratio,
+          current.canvas.height / ratio,
         );
       } else {
-        const position =
-          cell.to -
-          (cell.rolls ?? []).reduce(
-            (offset, roll) =>
-              offset +
-              roll.delta * (1 - motionProgress(roll.clock, progressCache)),
-            0,
-          );
+        const position = cell.to - cell.offsetY;
         const index = Math.floor(position);
         for (let offset = 0; offset <= 1; offset += 1) {
           const image = glyph(
             atlas,
             String((((index + offset) % 10) + 10) % 10),
           );
-          const y = (index + offset - position) * atlas.lineHeight;
+          const y =
+            Math.round((index + offset - position) * atlas.lineHeight * ratio) /
+            ratio;
           const visibleInk =
             Math.min(atlas.lineHeight, y + image.inkBottom) -
             Math.max(0, y + image.inkTop);
           // Skip subpixel ink slivers without changing the glyph color.
-          if (visibleInk * atlas.ratio < 1) continue;
+          if (visibleInk * ratio < 1) continue;
           context.drawImage(
             image.canvas,
-            x - 2,
+            x + Math.round(((cell.width - image.advance) * ratio) / 2) / ratio,
             y,
-            image.canvas.width / atlas.ratio,
-            image.canvas.height / atlas.ratio,
+            image.canvas.width / ratio,
+            image.canvas.height / ratio,
           );
         }
       }
-    });
+    }
     context.restore();
   }
   private syncClocks(next: Set<Clock>) {
-    this.clocks.forEach((clock) => {
+    for (const clock of this.clocks) {
       if (!next.has(clock) && --clock.users === 0) clock.animation.cancel();
-    });
-    next.forEach((clock) => {
+    }
+    for (const clock of next) {
       if (!this.clocks.has(clock)) clock.users += 1;
-    });
+    }
     this.clocks = next;
   }
   settle(preserveLayout?: boolean) {

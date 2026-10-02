@@ -37,9 +37,12 @@ export function createBrowserEnvironment() {
           removeEventListener: vi.fn(),
         },
   );
+  const fonts = new EventTarget();
+  vi.spyOn(fonts, "addEventListener");
+  vi.spyOn(fonts, "removeEventListener");
   Object.defineProperty(document, "fonts", {
     configurable: true,
-    value: { addEventListener: vi.fn(), removeEventListener: vi.fn() },
+    value: fonts,
   });
   const context = {
     font: "",
@@ -69,17 +72,24 @@ export function createBrowserEnvironment() {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
   );
-  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
-    x: 0,
-    y: 0,
-    left: 0,
-    top: 0,
-    width: 40,
-    height: 20,
-    right: 40,
-    bottom: 20,
-    toJSON() {},
-  });
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: Element) {
+      return {
+        x: 0,
+        y: 0,
+        left: 0,
+        top:
+          this.tagName === "SPAN" && this.getAttribute("aria-hidden") === "true"
+            ? (this.parentElement?.getBoundingClientRect().top ?? 0) + 14
+            : 0,
+        width: 40,
+        height: 20,
+        right: 40,
+        bottom: 20,
+        toJSON() {},
+      } as DOMRect;
+    },
+  );
   Object.defineProperty(Range.prototype, "getBoundingClientRect", {
     configurable: true,
     value: () => ({ left: 0, width: 8 }),
@@ -129,6 +139,11 @@ export function createBrowserEnvironment() {
     animations,
     durations,
     timings,
+    finishFonts(fontfaces: FontFace[] = []) {
+      fonts.dispatchEvent(
+        Object.assign(new Event("loadingdone"), { fontfaces }),
+      );
+    },
     setReducedMotion(reduced: boolean) {
       motionPreference.matches = reduced;
       motionPreference.addEventListener.mock.calls.forEach(([, listener]) =>

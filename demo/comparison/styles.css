@@ -1,6 +1,9 @@
 .comparison-preview {
   gap: 22px;
 }
+.comparison-preview .counter-grid {
+  font-variant-numeric: tabular-nums;
+}
 .comparison-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
